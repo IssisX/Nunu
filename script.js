@@ -1049,30 +1049,31 @@ function spawnRobots() {
 
     // Calculate current bounding box of player's robot
     if (gameState.playerRobot.parts.length > 0) {
-        const playerVertices = gameState.playerRobot.parts.reduce((verts, part) => verts.concat(part.vertices), []);
-        if (playerVertices.length > 0) {
-            const playerBounds = Matter.Bounds.create(playerVertices);
-            const playerRobotWidth = playerBounds.max.x - playerBounds.min.x;
+        // Correct way to get bounds for multiple bodies: pass the bodies to Bounds.create
+        // Matter.js will then iterate through their vertices internally.
+        const playerBounds = Matter.Bounds.create(gameState.playerRobot.parts); // Pass array of bodies
 
-            // Desired position: left side of canvas
+        if (playerBounds && typeof playerBounds.min.x === 'number' && typeof playerBounds.min.y === 'number') { // Check if bounds are valid numbers
+            const playerRobotWidth = playerBounds.max.x - playerBounds.min.x;
+            // const playerRobotHeight = playerBounds.max.y - playerBounds.min.y;
+
             const targetPlayerX = playerRobotWidth / 2 + 50; // 50px padding from left wall
             const currentRobotCenterX = (playerBounds.min.x + playerBounds.max.x) / 2;
+
             const currentRobotCenterY = (playerBounds.min.y + playerBounds.max.y) / 2;
-            const targetPlayerY = gameState.canvasHeight / 2; // Vertically center for now, or adjust as needed
+            const actualTargetPlayerY = gameState.canvasHeight / 2; // Vertically center the robot
 
             const dxPlayer = targetPlayerX - currentRobotCenterX;
-            const dyPlayer = targetPlayerY - currentRobotCenterY;
+            const dyPlayer = actualTargetPlayerY - currentRobotCenterY;
 
-            // Move all player robot parts
             gameState.playerRobot.parts.forEach(part => {
                 Matter.Body.translate(part, { x: dxPlayer, y: dyPlayer });
-                Matter.Body.setVelocity(part, { x: 0, y: 0 }); // Reset velocity
-                Matter.Body.setAngularVelocity(part, 0); // Reset angular velocity
+                Matter.Body.setVelocity(part, { x: 0, y: 0 });
+                Matter.Body.setAngularVelocity(part, 0);
             });
-            // Note: Constraints are relative and should move with the bodies.
-            console.log(`Player robot repositioned by dx:${dxPlayer.toFixed(0)}, dy:${dyPlayer.toFixed(0)}`);
+            console.log(`Player robot repositioned by dx:${dxPlayer.toFixed(0)}, dy:${dyPlayer.toFixed(0)} to target center X:${targetPlayerX.toFixed(0)}, Y:${actualTargetPlayerY.toFixed(0)}`);
         } else {
-            console.warn("Player robot has parts but no vertices found to calculate bounds for repositioning.");
+            console.warn("Could not calculate valid bounds for player robot repositioning. Parts might not be positioned correctly for battle. Bounds:", playerBounds);
         }
     }
 
