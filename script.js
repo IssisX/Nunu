@@ -85,6 +85,12 @@
             snapSourcePoint: null, // The specific connection point on the source (dragged) part
             snapConstraint: null // Info for creating the constraint later
         },
+        playerControls: {
+            forward: false,
+            backward: false,
+            left: false,
+            right: false
+        },
         ui: {
             partsGrid: document.querySelector('.parts-grid'),
             jsonTextarea: document.getElementById('json-textarea'),
@@ -94,6 +100,10 @@
             startBattleButton: document.getElementById('start-battle-button'),
             gameCanvas: document.getElementById('game-canvas'),
             gameTitle: document.querySelector('.game-title'),
+            // Added for Game Over
+            gameOverScreen: document.getElementById('game-over-screen'),
+            gameOverWinner: document.getElementById('game-over-winner'),
+            backToEditorButton: document.getElementById('back-to-editor-button'),
         },
         // More properties will be added as needed
     };
@@ -107,6 +117,243 @@
     const Composite = Matter.Composite;
     const Events = Matter.Events;
     const Constraint = Matter.Constraint;
+
+const PLAYER_TORQUE_AMOUNT = 0.15; // Adjusted torque, may need further tuning
+const AI_TORQUE_AMOUNT = 0.08; // Can be tuned
+const BASE_DAMAGE_MULTIPLIER = 2; // PDS 3.3
+const MIN_COLLISION_SPEED_FOR_DAMAGE = 2; // PDS 3.3
+
+function handlePlayerInput(event, isKeyDown) {
+    // Prevent default browser action for arrow keys, etc. if they scroll the page
+    if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'].includes(event.key.toLowerCase())) {
+        event.preventDefault();
+    }
+
+    switch (event.key.toLowerCase()) {
+        case 'w':
+        case 'arrowup':
+            gameState.playerControls.forward = isKeyDown;
+            break;
+        case 's':
+        case 'arrowdown':
+            gameState.playerControls.backward = isKeyDown;
+            break;
+        case 'a':
+        case 'arrowleft':
+            gameState.playerControls.left = isKeyDown;
+            break;
+        case 'd':
+        case 'arrowright':
+            gameState.playerControls.right = isKeyDown;
+            break;
+    }
+}
+
+function applyPlayerControls() {
+    if (gameState.mode !== 'BATTLE' || !gameState.playerRobot || gameState.playerRobot.parts.length === 0) {
+        return;
+    }
+
+    const { forward, backward, left, right } = gameState.playerControls;
+    const mainChassis = gameState.playerRobot.parts.find(p => p.customProps && p.customProps.type === 'chassis' && p.customProps.isPlayerPart);
+
+    gameState.playerRobot.parts.forEach(part => {
+        if (part.customProps && part.customProps.type === 'wheel' && part.customProps.isPlayerPart) {
+            let baseTorque = 0;
+            if (forward) baseTorque += PLAYER_TORQUE_AMOUNT;
+            if (backward) baseTorque -= PLAYER_TORQUE_AMOUNT;
+
+            let turnTorque = 0;
+            if (mainChassis) {
+                const relevantConstraint = gameState.playerRobot.constraints.find(c =>
+                    (c.bodyA === mainChassis && c.bodyB === part) ||
+                    (c.bodyB === mainChassis && c.bodyA === part)
+                );
+
+                if (relevantConstraint) {
+                    const pointOnChassis = (relevantConstraint.bodyA === mainChassis) ? relevantConstraint.pointA : relevantConstraint.pointB;
+                    // Assuming chassis's local (0,0) is its center.
+                    // pointA/B are relative to the body's center.
+                    if (pointOnChassis.x < -1) { // Wheel is on the left side of chassis
+                        if (left) turnTorque -= PLAYER_TORQUE_AMOUNT * 0.85;
+                        if (right) turnTorque += PLAYER_TORQUE_AMOUNT * 0.85;
+                    } else if (pointOnChassis.x > 1) { // Wheel is on the right side of chassis
+                        if (left) turnTorque += PLAYER_TORQUE_AMOUNT * 0.85;
+                        if (right) turnTorque -= PLAYER_TORQUE_AMOUNT * 0.85;
+                    } else { // Wheel is central
+                         if (left) turnTorque -= PLAYER_TORQUE_AMOUNT * 0.4;
+                         if (right) turnTorque += PLAYER_TORQUE_AMOUNT * 0.4;
+                    }
+                } else { // Wheel not directly constrained to main chassis - simpler spin
+                    if (left) turnTorque -= PLAYER_TORQUE_AMOUNT * 0.5;
+                    if (right) turnTorque += PLAYER_TORQUE_AMOUNT * 0.5;
+                }
+            } else { // No main chassis found, apply simpler spin torque
+                if (left) turnTorque -= PLAYER_TORQUE_AMOUNT * 0.5;
+                if (right) turnTorque += PLAYER_TORQUE_AMOUNT * 0.5;
+            }
+            Matter.Body.setTorque(part, baseTorque + turnTorque);
+        }
+    });
+}
+
+const SNAP_RADIUS = 30; // PDS 2.2.2: 30px
+
+/**
+ * PDS 2.2.2: Checks for snap points and updates ghost position if snapped.
+ */
+function checkSnapPoints(event) {
+    if (!gameState.dragging.isDragging || !gameState.dragging.partType) return;
+
+    const draggedPartDef = componentDefaults[gameState.dragging.partType];
+    if (!draggedPartDef || !draggedPartDef.connectionPoints || draggedPartDef.connectionPoints.length === 0) {
+        clearSnapState(); // No connection points on the dragged part
+        return;
+    }
+
+    const mousePos = getMousePosInCanvas(event);
+    let bestSnap = null;
+    let minDistanceSq = SNAP_RADIUS * SNAP_RADIUS;
+
+    // Iterate over all parts already on the player's robot
+    for (const existingPart of gameState.playerRobot.parts) {
+        if (!existingPart.customProps || !existingPart.customProps.connectionPoints) continue;
+
+        for (const targetPointDef of existingPart.customProps.connectionPoints) {
+            if (targetPointDef.isOccupied) continue; // Skip if already used by another constraint
+
+            // Calculate world position of the target connection point
+            const targetPointWorld = Matter.Vector.add(
+                existingPart.position,
+                Matter.Vector.rotate({ x: targetPointDef.x, y: targetPointDef.y }, existingPart.angle)
+            );
+
+            // Iterate over connection points of the part being dragged
+            for (const sourcePointDef of draggedPartDef.connectionPoints) {
+                // Calculate the hypothetical world position of the source connection point if the part was placed at mousePos
+                // This means the sourcePointDef (relative to dragged part's center) should align with targetPointWorld
+                // So, dragged part's center would be: targetPointWorld - sourcePointDef (rotated by dragged part's current/default angle)
+                // For simplicity in finding a snap, we first check distance from mouse to targetPointWorld.
+                // A more accurate check involves iterating rotations or assuming a default orientation for snapping.
+                // Let's assume the dragged part snaps with its default orientation (angle 0 for now).
+
+                const distanceSq = Matter.Vector.magnitudeSquared(Matter.Vector.sub(targetPointWorld, mousePos));
+
+                if (distanceSq < minDistanceSq) {
+                    minDistanceSq = distanceSq;
+                    bestSnap = {
+                        targetBody: existingPart,
+                        targetPoint: targetPointDef, // The definition {x, y, type}
+                        targetPointWorld: targetPointWorld, // Calculated world coords
+                        sourcePartType: gameState.dragging.partType,
+                        sourcePoint: sourcePointDef, // The definition {x, y, type}
+                    };
+                }
+            }
+        }
+    }
+
+    if (bestSnap) {
+        gameState.dragging.isSnapped = true;
+        gameState.dragging.snapTargetBody = bestSnap.targetBody;
+        gameState.dragging.snapTargetPoint = bestSnap.targetPoint; // e.g. {x:0, y:-40, type:'top'}
+        gameState.dragging.snapSourcePoint = bestSnap.sourcePoint; // e.g. {x:0, y:30, type:'base'}
+
+        // Adjust ghost position:
+        // The ghost part's sourcePoint should align with targetPointWorld.
+        // The ghost part's center = targetPointWorld - (rotated sourcePoint relative vector)
+        // Assuming ghost is not rotated for now for simplicity of ghost vis.
+        const ghostPartCenter = Matter.Vector.sub(
+            bestSnap.targetPointWorld,
+            { x: bestSnap.sourcePoint.x, y: bestSnap.sourcePoint.y } // Assuming ghost angle 0
+        );
+
+        // Convert canvas coords back to screen coords for the ghost div
+        const canvasRect = gameState.ui.gameCanvas.getBoundingClientRect();
+        const screenX = ghostPartCenter.x + canvasRect.left;
+        const screenY = ghostPartCenter.y + canvasRect.top;
+
+        // Update ghost element to align its center with ghostPartCenter
+        const ghostRect = gameState.dragging.ghostElement.getBoundingClientRect();
+        gameState.dragging.ghostElement.style.left = `${screenX - ghostRect.width / 2}px`;
+        gameState.dragging.ghostElement.style.top = `${screenY - ghostRect.height / 2}px`;
+
+        // Store info needed for creating constraint
+        gameState.dragging.snapConstraint = {
+            bodyA: bestSnap.targetBody,
+            // bodyB will be the new part
+            pointA: { x: bestSnap.targetPoint.x, y: bestSnap.targetPoint.y }, // Relative to bodyA's center
+            // pointB will be relative to bodyB's center
+            pointB: { x: bestSnap.sourcePoint.x, y: bestSnap.sourcePoint.y }
+        };
+
+    } else {
+        clearSnapState();
+    }
+    renderSnapHighlights(); // Visual feedback for snapping
+}
+
+function clearSnapState() {
+    gameState.dragging.isSnapped = false;
+    gameState.dragging.snapTargetBody = null;
+    gameState.dragging.snapTargetPoint = null;
+    gameState.dragging.snapSourcePoint = null;
+    gameState.dragging.snapConstraint = null;
+}
+
+/**
+ * PDS 2.2.2: Renders snap point highlights on canvas.
+ */
+function renderSnapHighlights() {
+    // This function is called continuously by the game loop or after checkSnapPoints
+    // For now, we'll just log, actual rendering on canvas needs integration with Matter.Render or custom drawing.
+
+    // A simple way to do this is to draw directly on the main canvas after Matter.js render.
+    // This requires hooking into Events.on(gameState.render, 'afterRender', drawHighlights);
+    // For now, we'll rely on ghost position and console logs.
+
+    if (gameState.dragging.isSnapped && gameState.dragging.snapTargetPoint) {
+        // console.log(`Snapped to ${gameState.dragging.snapTargetBody.customProps.label} at point type ${gameState.dragging.snapTargetPoint.type}`);
+        // Ideally, highlight gameState.dragging.snapTargetPoint on canvas
+    }
+}
+
+// Add a visual way to see connection points (for debugging and PDS requirement)
+// This needs to be called in a render loop (e.g., Matter.Render 'afterRender' event)
+function drawConnectionPoints(event) {
+    const context = gameState.render.context; // Get the canvas 2D context from Matter.js render
+
+    context.save(); // Save current drawing state
+    context.lineWidth = 1;
+
+    for (const part of gameState.playerRobot.parts) {
+        if (!part.customProps || !part.customProps.connectionPoints) continue;
+
+        for (const cp of part.customProps.connectionPoints) {
+            const worldPos = Matter.Vector.add(part.position, Matter.Vector.rotate({x: cp.x, y: cp.y}, part.angle));
+
+            context.beginPath();
+            context.arc(worldPos.x, worldPos.y, 5, 0, 2 * Math.PI); // Draw a small circle for CP
+
+            if (cp.isOccupied) {
+                context.fillStyle = 'rgba(255, 0, 0, 0.7)'; // Red if occupied
+            } else {
+                context.fillStyle = 'rgba(0, 255, 0, 0.7)'; // Green if available (PDS 2.2.2)
+            }
+            context.fill();
+
+            // Highlight if this is the current snap target
+            if (gameState.dragging.isSnapped &&
+                gameState.dragging.snapTargetBody === part &&
+                gameState.dragging.snapTargetPoint === cp) {
+                context.strokeStyle = 'rgba(0, 255, 0, 1)'; // Brighter green for active snap
+                context.lineWidth = 2;
+                context.stroke();
+            }
+        }
+    }
+    context.restore(); // Restore drawing state
+}
 
     /**
      * PDS 5.2: Main entry point, called on DOMContentLoaded
@@ -177,6 +424,21 @@
         const runner = Runner.create();
         Runner.run(runner, gameState.engine);
 
+        // PDS 5.2: Game Loop (placeholder, will be expanded)
+        Events.on(gameState.engine, 'beforeUpdate', (event) => {
+            if (gameState.mode === 'BATTLE') {
+                applyPlayerControls();
+                applyAIControls();
+                checkAndProcessDestruction(); // <<< ADD THIS CALL
+            }
+            // Other game loop logic can go here if needed
+        });
+
+        // PDS 3.3: Collision Handling
+        Events.on(gameState.engine, 'collisionStart', (event) => {
+            handleCollisions(event.pairs); // Pass all pairs to the handler
+        });
+
         console.log("Matter.js Engine and Renderer Initialized.");
         console.log(`Canvas dimensions: ${gameState.canvasWidth}x${gameState.canvasHeight}`);
     }
@@ -189,8 +451,23 @@
         // gameState.ui.saveButton.addEventListener('click', handleSaveDesign);
         // gameState.ui.loadButton.addEventListener('click', handleLoadDesign);
         // gameState.ui.clearButton.addEventListener('click', handleClearCanvas);
-        // gameState.ui.startBattleButton.addEventListener('click', startBattle);
-        console.log("Basic Controls Initialized (placeholders).");
+        if (gameState.ui.startBattleButton) { // Check if button exists
+            gameState.ui.startBattleButton.addEventListener('click', startBattle);
+        } else {
+            console.error("Start Battle Button not found in gameState.ui");
+        }
+        document.addEventListener('keydown', (event) => handlePlayerInput(event, true));
+        document.addEventListener('keyup', (event) => handlePlayerInput(event, false));
+        console.log("Keyboard listeners for player controls added.");
+
+        if (gameState.ui.backToEditorButton) {
+            gameState.ui.backToEditorButton.addEventListener('click', () => {
+                resetToEditor();
+            });
+        } else {
+            console.error("Back to Editor Button not found in gameState.ui");
+        }
+        console.log("Basic Controls Initialized.");
     }
 
     /**
@@ -429,7 +706,7 @@
         } else if (partType === 'spike') {
             // For spike, create a compound body if it has connection points to shift its CoM
             // For now, simple polygon using vertices. Origin (0,0) of vertices is part's center.
-            body = Bodies.fromVertices(x, y, Matter.Vertices.create(partDef.vertices), commonOptions);
+            body = Bodies.fromVertices(x, y, [partDef.vertices], commonOptions);
         } else {
             console.error(`Unsupported part type for creation: ${partType}`);
             return null;
@@ -445,177 +722,442 @@
         return body;
     }
 
-    // PDS 5.2: Game Loop (placeholder, will be expanded)
-    Events.on(gameState.engine, 'beforeUpdate', (event) => {
-        // This is the main game loop
-        // applyPlayerControls(); // If in battle mode
-        // applyAIControls(); // If in battle mode
+    // Start the game once the DOM is fully loaded
+    document.addEventListener('DOMContentLoaded', main);
+
+// Placeholder for handleGameOver - will be fully implemented in the next step
+function handleGameOver(winner) {
+    gameState.mode = 'GAMEOVER'; // Halt battle logic
+
+    // Update text content
+    if (gameState.ui.gameOverWinner) {
+        switch (winner.toLowerCase()) {
+            case 'player':
+                gameState.ui.gameOverWinner.textContent = "Player Wins!";
+                break;
+            case 'enemy':
+                gameState.ui.gameOverWinner.textContent = "Enemy Wins!";
+                break;
+            case 'draw (simultaneous)':
+                 gameState.ui.gameOverWinner.textContent = "It's a Draw!";
+                 break;
+            default:
+                gameState.ui.gameOverWinner.textContent = "Match Ended.";
+        }
+    }
+
+    // Display the game over screen
+    if (gameState.ui.gameOverScreen) {
+        gameState.ui.gameOverScreen.style.display = 'flex';
+    }
+
+    console.log(`Game Over! Winner: ${winner}.`);
+}
+
+function checkAndProcessDestruction() {
+    if (gameState.mode !== 'BATTLE') return;
+
+    let playerChassisDestroyed = false;
+    let enemyChassisDestroyed = false;
+
+    // Helper function to process destruction for a single robot's parts list
+    const processRobotParts = (robotParts, robotConstraints, owner) => {
+        for (let i = robotParts.length - 1; i >= 0; i--) {
+            const part = robotParts[i];
+            if (part.customProps && part.customProps.health <= 0) {
+                console.log(`${owner} part ID ${part.customProps.id} (${part.customProps.label}) is being removed due to zero health.`);
+
+                // Cosmetic Explosion placeholder
+                console.log(`Part ID ${part.customProps.id} visual explosion!`);
+
+                // Check for chassis destruction
+                if (part.customProps.label === 'chassis') {
+                    if (owner === 'Player') playerChassisDestroyed = true;
+                    if (owner === 'Enemy') enemyChassisDestroyed = true;
+                }
+
+                // Remove constraints attached to this part
+                for (let j = robotConstraints.length - 1; j >= 0; j--) {
+                    const constraint = robotConstraints[j];
+                    if (constraint.bodyA === part || constraint.bodyB === part) {
+                        World.remove(gameState.world, constraint);
+                        robotConstraints.splice(j, 1);
+                        console.log(`Constraint ${constraint.id} attached to part ${part.customProps.id} removed.`);
+                    }
+                }
+
+                // Remove the part from Matter world
+                World.remove(gameState.world, part);
+                // Remove the part from the game state array
+                robotParts.splice(i, 1);
+            }
+        }
+    };
+
+    // Process player robot
+    processRobotParts(gameState.playerRobot.parts, gameState.playerRobot.constraints, 'Player');
+    // Process enemy robot
+    processRobotParts(gameState.enemyRobot.parts, gameState.enemyRobot.constraints, 'Enemy');
+
+    // Handle Game Over condition (implementation of handleGameOver is next step)
+    if (playerChassisDestroyed && enemyChassisDestroyed) {
+        console.log("Simultaneous chassis destruction! It's a draw?");
+        // handleGameOver("Draw"); // Or based on which was detected first if possible
+        if (typeof handleGameOver === 'function') handleGameOver("Draw (Simultaneous)"); // Placeholder
+    } else if (playerChassisDestroyed) {
+        console.log("Player chassis destroyed! Enemy wins!");
+        if (typeof handleGameOver === 'function') handleGameOver("Enemy"); // Placeholder
+    } else if (enemyChassisDestroyed) {
+        console.log("Enemy chassis destroyed! Player wins!");
+        if (typeof handleGameOver === 'function') handleGameOver("Player"); // Placeholder
+    }
+}
+
+// Define this function within the IIFE:
+function handleCollisions(pairs) {
+    if (gameState.mode !== 'BATTLE') return;
+
+    pairs.forEach(pair => {
+        const { bodyA, bodyB, collision } = pair;
+
+        // Check if collision speed is sufficient to cause damage
+        if (collision.speed < MIN_COLLISION_SPEED_FOR_DAMAGE) {
+            return;
+        }
+
+        // Ensure parts have customProps (meaning they are game parts we track)
+        if (!bodyA.customProps || !bodyB.customProps) {
+            return;
+        }
+
+        // Ensure parts are from different robots (player vs enemy)
+        // And neither is static (like a wall, though walls shouldn't have customProps this way)
+        const isBodyAPlayer = bodyA.customProps.isPlayerPart === true && bodyA.customProps.isEnemyPart !== true;
+        const isBodyBPlayer = bodyB.customProps.isPlayerPart === true && bodyB.customProps.isEnemyPart !== true;
+        const isBodyAEnemy = bodyA.customProps.isEnemyPart === true && bodyA.customProps.isPlayerPart !== true;
+        const isBodyBEnemy = bodyB.customProps.isEnemyPart === true && bodyB.customProps.isPlayerPart !== true;
+
+        // Only proceed if one is player and the other is enemy
+        if (!((isBodyAPlayer && isBodyBEnemy) || (isBodyAEnemy && isBodyBPlayer))) {
+            return;
+        }
+
+        // Damage Calculation
+        const damage = collision.speed * BASE_DAMAGE_MULTIPLIER;
+
+        // Apply damage to both parts involved in the collision
+        // Part A
+        if (bodyA.customProps.health > 0) { // Check if not already destroyed
+            bodyA.customProps.health -= damage;
+            console.log(`Part ID ${bodyA.customProps.id} (${bodyA.customProps.label}, ${isBodyAPlayer ? 'Player' : 'Enemy'}) took ${damage.toFixed(1)} damage. Health: ${bodyA.customProps.health.toFixed(1)}`);
+            if (bodyA.customProps.health <= 0) {
+                bodyA.customProps.health = 0; // Cap at 0
+                // Destruction will be handled in the next step (partDestruction)
+                console.log(`Part ID ${bodyA.customProps.id} DESTROYED!`);
+            }
+        }
+
+        // Part B
+        if (bodyB.customProps.health > 0) { // Check if not already destroyed
+            bodyB.customProps.health -= damage;
+            console.log(`Part ID ${bodyB.customProps.id} (${bodyB.customProps.label}, ${isBodyBPlayer ? 'Player' : 'Enemy'}) took ${damage.toFixed(1)} damage. Health: ${bodyB.customProps.health.toFixed(1)}`);
+            if (bodyB.customProps.health <= 0) {
+                bodyB.customProps.health = 0; // Cap at 0
+                console.log(`Part ID ${bodyB.customProps.id} DESTROYED!`);
+            }
+        }
     });
+}
 
-    // PDS 3.3: Collision Handling (placeholder, will be expanded)
-    Events.on(gameState.engine, 'collisionStart', (event) => {
-        // handleCollisions(event.pairs);
-    });
-
-const SNAP_RADIUS = 30; // PDS 2.2.2: 30px
-
-/**
- * PDS 2.2.2: Checks for snap points and updates ghost position if snapped.
- */
-function checkSnapPoints(event) {
-    if (!gameState.dragging.isDragging || !gameState.dragging.partType) return;
-
-    const draggedPartDef = componentDefaults[gameState.dragging.partType];
-    if (!draggedPartDef || !draggedPartDef.connectionPoints || draggedPartDef.connectionPoints.length === 0) {
-        clearSnapState(); // No connection points on the dragged part
+function applyAIControls() {
+    if (gameState.mode !== 'BATTLE' || !gameState.enemyRobot || gameState.enemyRobot.parts.length === 0 || !gameState.playerRobot || gameState.playerRobot.parts.length === 0) {
         return;
     }
 
-    const mousePos = getMousePosInCanvas(event);
-    let bestSnap = null;
-    let minDistanceSq = SNAP_RADIUS * SNAP_RADIUS;
+    const playerChassis = gameState.playerRobot.parts.find(p => p.customProps && p.customProps.type === 'chassis' && p.customProps.isPlayerPart);
+    const enemyChassis = gameState.enemyRobot.parts.find(p => p.customProps && p.customProps.type === 'chassis' && p.customProps.isEnemyPart);
 
-    // Iterate over all parts already on the player's robot
-    for (const existingPart of gameState.playerRobot.parts) {
-        if (!existingPart.customProps || !existingPart.customProps.connectionPoints) continue;
+    if (!playerChassis || !enemyChassis) {
+        // One of the robots (or their chassis) is missing, AI can't operate
+        // Stop all enemy wheel torque if a chassis is missing
+        gameState.enemyRobot.parts.forEach(part => {
+            if (part.customProps && part.customProps.type === 'wheel' && part.customProps.isEnemyPart) {
+                 Matter.Body.setTorque(part, 0);
+            }
+        });
+        return;
+    }
 
-        for (const targetPointDef of existingPart.customProps.connectionPoints) {
-            if (targetPointDef.isOccupied) continue; // Skip if already used by another constraint
+    // Calculate vector from enemy to player
+    const vectorToPlayer = Matter.Vector.sub(playerChassis.position, enemyChassis.position);
 
-            // Calculate world position of the target connection point
-            const targetPointWorld = Matter.Vector.add(
-                existingPart.position,
-                Matter.Vector.rotate({ x: targetPointDef.x, y: targetPointDef.y }, existingPart.angle)
+    // Calculate angle to player relative to world's x-axis
+    // Correct: Math.atan2(vectorToPlayer.y, vectorToPlayer.x)
+    const desiredAngle = Math.atan2(vectorToPlayer.y, vectorToPlayer.x);
+
+    // Current enemy chassis angle (0 is along positive x-axis)
+    const currentAngle = enemyChassis.angle;
+
+    // Calculate angle difference. Normalize angles to be comparable.
+    let angleDifference = desiredAngle - currentAngle;
+
+    // Normalize angle difference to the range -PI to PI
+    while (angleDifference > Math.PI) angleDifference -= 2 * Math.PI;
+    while (angleDifference < -Math.PI) angleDifference += 2 * Math.PI;
+
+    // PDS 3.4 AI Logic: SEEKING (implicit), ALIGNING, ADVANCING
+    let alignTorque = 0;
+    let advanceTorque = 0;
+
+    if (Math.abs(angleDifference) > 0.1) { // ALIGNING state: 0.1 radians is approx 5.7 degrees
+        // Apply torque to turn. Positive angleDifference means enemy needs to turn counter-clockwise.
+        // Negative angleDifference means enemy needs to turn clockwise.
+        alignTorque = (angleDifference > 0) ? -AI_TORQUE_AMOUNT : AI_TORQUE_AMOUNT;
+    } else { // ADVANCING state
+        advanceTorque = AI_TORQUE_AMOUNT; // Apply forward torque
+    }
+
+    gameState.enemyRobot.parts.forEach(part => {
+        if (part.customProps && part.customProps.type === 'wheel' && part.customProps.isEnemyPart) {
+            let wheelTorque = 0;
+            wheelTorque += advanceTorque; // All wheels get forward/backward torque equally for advancing
+
+            // Apply differential torque for alignment
+            const relevantConstraint = gameState.enemyRobot.constraints.find(c =>
+                (c.bodyA === enemyChassis && c.bodyB === part) ||
+                (c.bodyB === enemyChassis && c.bodyA === part)
             );
 
-            // Iterate over connection points of the part being dragged
-            for (const sourcePointDef of draggedPartDef.connectionPoints) {
-                // Calculate the hypothetical world position of the source connection point if the part was placed at mousePos
-                // This means the sourcePointDef (relative to dragged part's center) should align with targetPointWorld
-                // So, dragged part's center would be: targetPointWorld - sourcePointDef (rotated by dragged part's current/default angle)
-                // For simplicity in finding a snap, we first check distance from mouse to targetPointWorld.
-                // A more accurate check involves iterating rotations or assuming a default orientation for snapping.
-                // Let's assume the dragged part snaps with its default orientation (angle 0 for now).
-
-                const distanceSq = Matter.Vector.magnitudeSquared(Matter.Vector.sub(targetPointWorld, mousePos));
-
-                if (distanceSq < minDistanceSq) {
-                    minDistanceSq = distanceSq;
-                    bestSnap = {
-                        targetBody: existingPart,
-                        targetPoint: targetPointDef, // The definition {x, y, type}
-                        targetPointWorld: targetPointWorld, // Calculated world coords
-                        sourcePartType: gameState.dragging.partType,
-                        sourcePoint: sourcePointDef, // The definition {x, y, type}
-                    };
+            if (relevantConstraint) {
+                const pointOnChassis = (relevantConstraint.bodyA === enemyChassis) ? relevantConstraint.pointA : relevantConstraint.pointB;
+                if (pointOnChassis.x < -1) { // Wheel on left side of enemy chassis
+                    wheelTorque += alignTorque * 0.9;
+                } else if (pointOnChassis.x > 1) { // Wheel on right side of enemy chassis
+                    wheelTorque -= alignTorque * 0.9;
+                } else { // Central wheel
+                     wheelTorque += alignTorque * 0.4;
                 }
+            } else { // Wheel not constrained to chassis, just add base align torque (spin)
+                 wheelTorque += alignTorque;
             }
+            Matter.Body.setTorque(part, wheelTorque);
+        }
+    });
+}
+
+// Helper function to create a predefined enemy robot
+function createEnemyRobot(x, y) {
+    const enemyParts = [];
+    const enemyConstraints = [];
+    const commonEnemyOptions = {
+        collisionFilter: { group: -2 }, // PDS 3.1
+        isEnemyPart: true // Custom flag
+    };
+
+    // Enemy Chassis
+    const chassisDef = componentDefaults.chassis;
+    const enemyChassis = Bodies.rectangle(x, y, chassisDef.width, chassisDef.height, {
+        ...commonEnemyOptions,
+        mass: chassisDef.mass,
+        render: { ...chassisDef.render, fillStyle: '#B71C1C' } // Dark red chassis
+    });
+    enemyChassis.customProps = {
+        label: 'chassis',
+        health: chassisDef.health,
+        type: 'chassis',
+        connectionPoints: JSON.parse(JSON.stringify(chassisDef.connectionPoints)).map(cp => ({...cp, isOccupied: false})),
+        id: Matter.Common.nextId(),
+        isEnemyPart: true
+    };
+    enemyParts.push(enemyChassis);
+
+    // Enemy Wheel 1 (Left)
+    const wheelDef = componentDefaults.wheel;
+    const wheelOffsetXB = chassisDef.width / 2 - wheelDef.radius / 2 - 5; // Position relative to chassis center
+    const wheelOffsetYB = chassisDef.height / 2 - wheelDef.radius / 2;
+
+    const enemyWheel1 = Bodies.circle(x - wheelOffsetXB, y + wheelOffsetYB, wheelDef.radius, {
+        ...commonEnemyOptions,
+        mass: wheelDef.mass,
+        friction: wheelDef.matterJsOptions.friction,
+        render: { ...wheelDef.render, fillStyle: '#757575' } // Darker grey wheels
+    });
+    enemyWheel1.customProps = { label: 'wheel', health: wheelDef.health, type: 'wheel', id: Matter.Common.nextId(), isEnemyPart: true };
+    enemyParts.push(enemyWheel1);
+    const constraintW1 = Constraint.create({
+        bodyA: enemyChassis, bodyB: enemyWheel1,
+        pointA: { x: -wheelOffsetXB, y: wheelOffsetYB }, // Relative to chassis center
+        pointB: { x: 0, y: 0 }, // Relative to wheel center
+        stiffness: 0.7, length: 0, render: { strokeStyle: '#B71C1C' }
+    });
+    enemyConstraints.push(constraintW1);
+
+    // Enemy Wheel 2 (Right)
+    const enemyWheel2 = Bodies.circle(x + wheelOffsetXB, y + wheelOffsetYB, wheelDef.radius, {
+        ...commonEnemyOptions,
+        mass: wheelDef.mass,
+        friction: wheelDef.matterJsOptions.friction,
+        render: { ...wheelDef.render, fillStyle: '#757575' }
+    });
+    enemyWheel2.customProps = { label: 'wheel', health: wheelDef.health, type: 'wheel', id: Matter.Common.nextId(), isEnemyPart: true };
+    enemyParts.push(enemyWheel2);
+    const constraintW2 = Constraint.create({
+        bodyA: enemyChassis, bodyB: enemyWheel2,
+        pointA: { x: wheelOffsetXB, y: wheelOffsetYB }, // Relative to chassis center
+        pointB: { x: 0, y: 0 }, // Relative to wheel center
+        stiffness: 0.7, length: 0, render: { strokeStyle: '#B71C1C' }
+    });
+    enemyConstraints.push(constraintW2);
+
+    // Enemy Spike
+    const spikeDef = componentDefaults.spike;
+    const spikeOffsetY = -chassisDef.height / 2 - spikeDef.height / 2; // Mount on top front
+    const enemySpike = Bodies.fromVertices(x, y + spikeOffsetY, [spikeDef.vertices], {
+        ...commonEnemyOptions,
+        mass: spikeDef.mass,
+        render: { ...spikeDef.render, fillStyle: '#FF6F00' } // Orange spike
+    });
+    enemySpike.customProps = { label: 'spike', health: spikeDef.health, type: 'spike', id: Matter.Common.nextId(), isEnemyPart: true };
+    enemyParts.push(enemySpike);
+    const constraintSpike = Constraint.create({
+        bodyA: enemyChassis, bodyB: enemySpike,
+        pointA: { x: 0, y: -chassisDef.height / 2 }, // Connect to top of chassis
+        pointB: { x: 0, y: spikeDef.height / 2 },   // Connect to base of spike (adjust if vertices origin is different)
+        stiffness: 0.9, length: 0, render: { strokeStyle: '#B71C1C' }
+    });
+    enemyConstraints.push(constraintSpike);
+
+    // Add all enemy parts and constraints to the world
+    World.add(gameState.world, [...enemyParts, ...enemyConstraints]);
+    gameState.enemyRobot.parts = enemyParts;
+    gameState.enemyRobot.constraints = enemyConstraints;
+    console.log(`Enemy robot created with ${enemyParts.length} parts and ${enemyConstraints.length} constraints.`);
+}
+
+
+// Modify the existing spawnRobots function
+function spawnRobots() {
+    console.log("Spawning robots for battle...");
+
+    // 1. Player Robot Preparation
+    // Ensure player parts have correct collision group (should be set at creation, but double check)
+    gameState.playerRobot.parts.forEach(part => {
+        part.collisionFilter.group = -1;
+        // Wake up parts if they were sleeping
+        Matter.Sleeping.set(part, false);
+    });
+
+    // Calculate current bounding box of player's robot
+    if (gameState.playerRobot.parts.length > 0) {
+        const playerVertices = gameState.playerRobot.parts.reduce((verts, part) => verts.concat(part.vertices), []);
+        if (playerVertices.length > 0) {
+            const playerBounds = Matter.Bounds.create(playerVertices);
+            const playerRobotWidth = playerBounds.max.x - playerBounds.min.x;
+
+            // Desired position: left side of canvas
+            const targetPlayerX = playerRobotWidth / 2 + 50; // 50px padding from left wall
+            const currentRobotCenterX = (playerBounds.min.x + playerBounds.max.x) / 2;
+            const currentRobotCenterY = (playerBounds.min.y + playerBounds.max.y) / 2;
+            const targetPlayerY = gameState.canvasHeight / 2; // Vertically center for now, or adjust as needed
+
+            const dxPlayer = targetPlayerX - currentRobotCenterX;
+            const dyPlayer = targetPlayerY - currentRobotCenterY;
+
+            // Move all player robot parts
+            gameState.playerRobot.parts.forEach(part => {
+                Matter.Body.translate(part, { x: dxPlayer, y: dyPlayer });
+                Matter.Body.setVelocity(part, { x: 0, y: 0 }); // Reset velocity
+                Matter.Body.setAngularVelocity(part, 0); // Reset angular velocity
+            });
+            // Note: Constraints are relative and should move with the bodies.
+            console.log(`Player robot repositioned by dx:${dxPlayer.toFixed(0)}, dy:${dyPlayer.toFixed(0)}`);
+        } else {
+            console.warn("Player robot has parts but no vertices found to calculate bounds for repositioning.");
         }
     }
 
-    if (bestSnap) {
-        gameState.dragging.isSnapped = true;
-        gameState.dragging.snapTargetBody = bestSnap.targetBody;
-        gameState.dragging.snapTargetPoint = bestSnap.targetPoint; // e.g. {x:0, y:-40, type:'top'}
-        gameState.dragging.snapSourcePoint = bestSnap.sourcePoint; // e.g. {x:0, y:30, type:'base'}
 
-        // Adjust ghost position:
-        // The ghost part's sourcePoint should align with targetPointWorld.
-        // The ghost part's center = targetPointWorld - (rotated sourcePoint relative vector)
-        // Assuming ghost is not rotated for now for simplicity of ghost vis.
-        const ghostPartCenter = Matter.Vector.sub(
-            bestSnap.targetPointWorld,
-            { x: bestSnap.sourcePoint.x, y: bestSnap.sourcePoint.y } // Assuming ghost angle 0
-        );
+    // 2. Enemy Robot Creation and Spawning
+    const enemySpawnX = gameState.canvasWidth - 150; // Spawn on the right side
+    const enemySpawnY = gameState.canvasHeight / 2;
+    createEnemyRobot(enemySpawnX, enemySpawnY);
 
-        // Convert canvas coords back to screen coords for the ghost div
-        const canvasRect = gameState.ui.gameCanvas.getBoundingClientRect();
-        const screenX = ghostPartCenter.x + canvasRect.left;
-        const screenY = ghostPartCenter.y + canvasRect.top;
+    console.log("Robots spawned.");
+}
 
-        // Update ghost element to align its center with ghostPartCenter
-        const ghostRect = gameState.dragging.ghostElement.getBoundingClientRect();
-        gameState.dragging.ghostElement.style.left = `${screenX - ghostRect.width / 2}px`;
-        gameState.dragging.ghostElement.style.top = `${screenY - ghostRect.height / 2}px`;
-
-        // Store info needed for creating constraint
-        gameState.dragging.snapConstraint = {
-            bodyA: bestSnap.targetBody,
-            // bodyB will be the new part
-            pointA: { x: bestSnap.targetPoint.x, y: bestSnap.targetPoint.y }, // Relative to bodyA's center
-            // pointB will be relative to bodyB's center
-            pointB: { x: bestSnap.sourcePoint.x, y: bestSnap.sourcePoint.y }
-        };
-
-    } else {
-        clearSnapState();
+function clearBattlefield() {
+    console.log("Placeholder: clearBattlefield() called. Clearing logic to be implemented.");
+    // This will involve removing enemy robot parts, projectiles etc. from Matter.world
+    // and resetting player robot if necessary, or reloading from saved state.
+    // For now, we just clear the visual robot arrays.
+    if (gameState.world && gameState.enemyRobot && gameState.enemyRobot.parts) {
+        gameState.enemyRobot.parts.forEach(part => World.remove(gameState.world, part));
     }
-    renderSnapHighlights(); // Visual feedback for snapping
-}
+    gameState.enemyRobot.parts = [];
 
-function clearSnapState() {
-    gameState.dragging.isSnapped = false;
-    gameState.dragging.snapTargetBody = null;
-    gameState.dragging.snapTargetPoint = null;
-    gameState.dragging.snapSourcePoint = null;
-    gameState.dragging.snapConstraint = null;
-}
-
-/**
- * PDS 2.2.2: Renders snap point highlights on canvas.
- */
-function renderSnapHighlights() {
-    // This function is called continuously by the game loop or after checkSnapPoints
-    // For now, we'll just log, actual rendering on canvas needs integration with Matter.Render or custom drawing.
-
-    // A simple way to do this is to draw directly on the main canvas after Matter.js render.
-    // This requires hooking into Events.on(gameState.render, 'afterRender', drawHighlights);
-    // For now, we'll rely on ghost position and console logs.
-
-    if (gameState.dragging.isSnapped && gameState.dragging.snapTargetPoint) {
-        // console.log(`Snapped to ${gameState.dragging.snapTargetBody.customProps.label} at point type ${gameState.dragging.snapTargetPoint.type}`);
-        // Ideally, highlight gameState.dragging.snapTargetPoint on canvas
+    if (gameState.world && gameState.enemyRobot && gameState.enemyRobot.constraints) {
+        gameState.enemyRobot.constraints.forEach(constraint => World.remove(gameState.world, constraint));
     }
+    gameState.enemyRobot.constraints = [];
+
+    console.log("Enemy robot parts and constraints cleared from world and gameState.");
 }
 
-// Add a visual way to see connection points (for debugging and PDS requirement)
-// This needs to be called in a render loop (e.g., Matter.Render 'afterRender' event)
-function drawConnectionPoints(event) {
-    const context = gameState.render.context; // Get the canvas 2D context from Matter.js render
-
-    context.save(); // Save current drawing state
-    context.lineWidth = 1;
-
-    for (const part of gameState.playerRobot.parts) {
-        if (!part.customProps || !part.customProps.connectionPoints) continue;
-
-        for (const cp of part.customProps.connectionPoints) {
-            const worldPos = Matter.Vector.add(part.position, Matter.Vector.rotate({x: cp.x, y: cp.y}, part.angle));
-
-            context.beginPath();
-            context.arc(worldPos.x, worldPos.y, 5, 0, 2 * Math.PI); // Draw a small circle for CP
-
-            if (cp.isOccupied) {
-                context.fillStyle = 'rgba(255, 0, 0, 0.7)'; // Red if occupied
-            } else {
-                context.fillStyle = 'rgba(0, 255, 0, 0.7)'; // Green if available (PDS 2.2.2)
-            }
-            context.fill();
-
-            // Highlight if this is the current snap target
-            if (gameState.dragging.isSnapped &&
-                gameState.dragging.snapTargetBody === part &&
-                gameState.dragging.snapTargetPoint === cp) {
-                context.strokeStyle = 'rgba(0, 255, 0, 1)'; // Brighter green for active snap
-                context.lineWidth = 2;
-                context.stroke();
-            }
-        }
+function startBattle() {
+    if (gameState.playerRobot.parts.length === 0) {
+        alert("Please build a robot before starting a battle!");
+        return;
     }
-    context.restore(); // Restore drawing state
+    // Check if there's at least one chassis for the player
+    const playerHasChassis = gameState.playerRobot.parts.some(part => part.customProps && part.customProps.label === 'chassis');
+    if (!playerHasChassis) {
+        alert("Your robot must have at least one chassis to start a battle!");
+        return;
+    }
+
+    gameState.mode = 'BATTLE';
+    gameState.ui.gameTitle.textContent = "Battle Mode";
+
+    // Hide Assembly UI elements
+    const partsInventory = document.querySelector('.parts-inventory');
+    if (partsInventory) partsInventory.style.display = 'none';
+
+    const designManagement = document.querySelector('.design-management');
+    if (designManagement) designManagement.style.display = 'none';
+
+    if (gameState.ui.startBattleButton) gameState.ui.startBattleButton.style.display = 'none';
+
+    // Placeholder for showing Battle UI elements
+    console.log("Battle UI (e.g., controls) should be shown here.");
+    // Example: document.getElementById('battle-controls-ui').style.display = 'block';
+
+    console.log("Switched to BATTLE mode.");
+    spawnRobots(); // Call to the (soon to be implemented) robot spawning function
 }
 
-    // Start the game once the DOM is fully loaded
-    document.addEventListener('DOMContentLoaded', main);
+function resetToEditor() {
+    gameState.mode = 'ASSEMBLY';
+    gameState.ui.gameTitle.textContent = "Robot Assembly";
+
+    // Show Assembly UI elements
+    const partsInventory = document.querySelector('.parts-inventory');
+    if (partsInventory) partsInventory.style.display = ''; // Reverts to CSS default
+
+    const designManagement = document.querySelector('.design-management');
+    if (designManagement) designManagement.style.display = ''; // Reverts to CSS default
+
+    if (gameState.ui.startBattleButton) gameState.ui.startBattleButton.style.display = ''; // Reverts to CSS default
+
+    // Placeholder for hiding Battle UI elements
+    console.log("Assembly UI (e.g., part editor) should be shown here.");
+    // Example: document.getElementById('battle-controls-ui').style.display = 'none';
+
+    clearBattlefield(); // Clear any enemy robots, projectiles, etc.
+
+    if (gameState.ui.gameOverScreen) { // Hide game over screen if it's visible
+        gameState.ui.gameOverScreen.style.display = 'none';
+    }
+    console.log("Switched to ASSEMBLY mode.");
+}
 
 })(); // End of IIFE
