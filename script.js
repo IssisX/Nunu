@@ -474,6 +474,14 @@ function drawConnectionPoints(event) {
      * PDS 5.2: Populates the parts inventory UI
      */
     function initComponents() {
+    // New log to check if partsGrid exists when initComponents is called
+    if (!gameState.ui.partsGrid) {
+        console.error('[INIT_COMP_DEBUG] CRITICAL: gameState.ui.partsGrid is null or undefined at the start of initComponents! Cannot populate part icons.');
+        return; // Exit if partsGrid isn't found
+    } else {
+        console.log('[INIT_COMP_DEBUG] initComponents called. gameState.ui.partsGrid found:', gameState.ui.partsGrid);
+    }
+
         gameState.ui.partsGrid.innerHTML = ''; // Clear existing parts, if any
 
         for (const partType in componentDefaults) {
@@ -496,7 +504,8 @@ function drawConnectionPoints(event) {
 
             // Placeholder for drag start event
             partElement.addEventListener('mousedown', (e) => {
-                initiateDrag(e, partType); // <<< USE THIS
+                console.log('[EVENT_DEBUG] mousedown on part icon fired. Part Type:', partType, 'Element:', e.currentTarget); // New log
+                initiateDrag(e, partType);
             });
 
             gameState.ui.partsGrid.appendChild(partElement);
@@ -518,6 +527,7 @@ function drawConnectionPoints(event) {
      * PDS 2.2.1
      */
     function initiateDrag(event, partType) {
+        console.log('[DRAG_INIT_ENTRY] initiateDrag called. PartType:', partType); // New log (modified existing one to be clearly at entry)
         console.log('[DRAG_INIT] Attempting to initiate drag for partType:', partType, 'Event:', event);
         if (gameState.dragging.isDragging) {
             console.warn('[DRAG_INIT] Drag already in progress. Ignoring.');
