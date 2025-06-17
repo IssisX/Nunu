@@ -518,16 +518,23 @@ function drawConnectionPoints(event) {
      * PDS 2.2.1
      */
     function initiateDrag(event, partType) {
-        if (gameState.dragging.isDragging) return; // Ignore if already dragging
+        console.log('[DRAG_INIT] Attempting to initiate drag for partType:', partType, 'Event:', event);
+        if (gameState.dragging.isDragging) {
+            console.warn('[DRAG_INIT] Drag already in progress. Ignoring.');
+            return;
+        }
 
         const partDef = componentDefaults[partType];
-        if (!partDef) return;
+        if (!partDef) {
+            console.error('[DRAG_INIT] Unknown partType:', partType);
+            return;
+        }
+        console.log('[DRAG_INIT] Part definition found:', partDef);
 
         gameState.dragging.isDragging = true;
         gameState.dragging.partType = partType;
-        gameState.dragging.originalElement = event.currentTarget; // The .part-icon div
+        gameState.dragging.originalElement = event.currentTarget;
 
-        // Create ghost element
         gameState.dragging.ghostElement = gameState.dragging.originalElement.cloneNode(true);
         gameState.dragging.ghostElement.classList.add('part-ghost');
         gameState.dragging.ghostElement.style.position = 'absolute';
@@ -541,13 +548,13 @@ function drawConnectionPoints(event) {
         gameState.dragging.offsetY = event.clientY - originalRect.top;
 
         document.body.appendChild(gameState.dragging.ghostElement);
-        moveGhostElement(event); // Position it initially
+        console.log('[DRAG_INIT] Ghost element created and appended:', gameState.dragging.ghostElement);
+        moveGhostElement(event);
 
-        // Add global listeners for mouse move and up
         document.addEventListener('mousemove', handleDragMove);
         document.addEventListener('mouseup', handleDragEnd);
-
-        console.log(`Dragging ${partType} started.`);
+        console.log('[DRAG_INIT] Global mousemove and mouseup listeners added.');
+        console.log(`[DRAG_INIT] Dragging ${partType} started. Initial ghost position: left=${gameState.dragging.ghostElement.style.left}, top=${gameState.dragging.ghostElement.style.top}`);
     }
 
     /**
@@ -560,54 +567,56 @@ function drawConnectionPoints(event) {
         // Position ghost element based on cursor, adjusted by the initial offset
         gameState.dragging.ghostElement.style.left = `${event.clientX - gameState.dragging.offsetX}px`;
         gameState.dragging.ghostElement.style.top = `${event.clientY - gameState.dragging.offsetY}px`;
+        // console.log('[DRAG_MOVE_GHOST] Ghost moved to left:', gameState.dragging.ghostElement.style.left, 'top:', gameState.dragging.ghostElement.style.top); // Can be too verbose
     }
 
     /**
      * Handles mouse movement during dragging.
      */
     function handleDragMove(event) {
+        // console.log('[DRAG_MOVE] handleDragMove called. Snapped:', gameState.dragging.isSnapped); // Can be too verbose
         if (!gameState.dragging.isDragging) return;
 
         if (gameState.dragging.isSnapped) {
-            // If snapped, the ghost position is controlled by checkSnapPoints
-            checkSnapPoints(event); // Re-check to allow un-snapping or snapping to a better point
+            // console.log('[DRAG_MOVE] Is snapped, re-checking snap points.'); // Can be too verbose
+            checkSnapPoints(event);
         } else {
-            // If not snapped, move ghost freely with cursor
             moveGhostElement(event);
         }
-        checkSnapPoints(event); // Always check for snaps
-        // renderSnapHighlights will be called by a render loop if implemented that way
+        checkSnapPoints(event);
     }
 
 
     // Modify handleDragEnd to use snap information
     function handleDragEnd(event) {
-        if (!gameState.dragging.isDragging) return;
+        console.log('[DRAG_END] handleDragEnd called. Event:', event);
+        if (!gameState.dragging.isDragging) {
+            console.warn('[DRAG_END] Not currently dragging. Exiting.');
+            return;
+        }
 
         let placedPart = null;
+        const mousePos = getMousePosInCanvas(event);
+        const canvasRect = gameState.ui.gameCanvas.getBoundingClientRect();
+        const isOverCanvas = event.clientX >= canvasRect.left && event.clientX <= canvasRect.right &&
+                             event.clientY >= canvasRect.top && event.clientY <= canvasRect.bottom;
+
+        console.log(`[DRAG_END] Mouse released at screen (clientX:${event.clientX}, clientY:${event.clientY}), canvas local (x:${mousePos.x}, y:${mousePos.y}). IsOverCanvas: ${isOverCanvas}. IsSnapped: ${gameState.dragging.isSnapped}`);
+
         if (gameState.dragging.isSnapped && gameState.dragging.snapTargetBody && gameState.dragging.snapSourcePoint) {
             const targetBody = gameState.dragging.snapTargetBody;
             const targetPointDef = gameState.dragging.snapTargetPoint;
             const sourcePointDef = gameState.dragging.snapSourcePoint;
-
-            // Calculate the position for the new part.
-            // The new part's sourcePoint (relative to its own center) should align with targetBody's targetPoint (in world space).
-            // New part's angle will be targetBody's angle initially (can be refined)
             const newPartAngle = targetBody.angle;
-
-            // World position of target connection point
             const targetPointWorld = Matter.Vector.add(
                 targetBody.position,
                 Matter.Vector.rotate({ x: targetPointDef.x, y: targetPointDef.y }, targetBody.angle)
             );
-
-            // The new part's center should be: targetPointWorld - (rotated sourcePointDef by newPartAngle)
             const newPartCenter = Matter.Vector.sub(
                 targetPointWorld,
                 Matter.Vector.rotate({ x: sourcePointDef.x, y: sourcePointDef.y }, newPartAngle)
             );
-
-            console.log(`Part ${gameState.dragging.partType} snapped and dropped. Target: ${targetBody.customProps.label}, New Part Pos: (${newPartCenter.x.toFixed(0)}, ${newPartCenter.y.toFixed(0)}) Angle: ${newPartAngle.toFixed(2)}`);
+            console.log(`[DRAG_END_SNAP] Part ${gameState.dragging.partType} snapped. Target: ${targetBody.customProps.label}. Calculated New Part Center: (${newPartCenter.x.toFixed(0)}, ${newPartCenter.y.toFixed(0)}), Angle: ${newPartAngle.toFixed(2)}`);
             placedPart = createPartOnCanvas(gameState.dragging.partType, newPartCenter.x, newPartCenter.y, newPartAngle, gameState.dragging.snapConstraint);
 
             if (placedPart && gameState.dragging.snapConstraint) {
@@ -615,57 +624,46 @@ function drawConnectionPoints(event) {
                 const constraint = Constraint.create({
                     bodyA: constraintDef.bodyA,
                     bodyB: placedPart,
-                    pointA: constraintDef.pointA, // Already relative to bodyA center
-                    pointB: constraintDef.pointB, // Already relative to bodyB center (sourcePointDef)
+                    pointA: constraintDef.pointA,
+                    pointB: constraintDef.pointB,
                     stiffness: 0.9,
-                    length: 0, // Try to keep them at the connection point distance
+                    length: 0,
                     render: {
-                        strokeStyle: '#66B2D9', // Accent color for constraint lines
+                        strokeStyle: '#66B2D9',
                         lineWidth: 2
                     }
                 });
                 World.add(gameState.world, constraint);
                 gameState.playerRobot.constraints.push(constraint);
-                console.log("Constraint created.");
-
-                // Mark connection points as occupied
+                console.log('[DRAG_END_SNAP] Constraint created successfully.');
                 targetPointDef.isOccupied = true;
-                // The corresponding sourcePointDef on the *instance* of the placedPart also needs marking
-                // (This assumes sourcePointDef on componentDefaults is not the one being marked)
                 const placedPartSourcePoint = placedPart.customProps.connectionPoints.find(
                     p => p.x === sourcePointDef.x && p.y === sourcePointDef.y && p.type === sourcePointDef.type
                 );
                 if (placedPartSourcePoint) placedPartSourcePoint.isOccupied = true;
-
             }
-
-        } else { // Not snapped, regular drop
-            const mousePos = getMousePosInCanvas(event);
-            const canvasRect = gameState.ui.gameCanvas.getBoundingClientRect();
-            const isOverCanvas = event.clientX >= canvasRect.left && event.clientX <= canvasRect.right &&
-                                 event.clientY >= canvasRect.top && event.clientY <= canvasRect.bottom;
-            if (isOverCanvas) {
-                console.log(`Part ${gameState.dragging.partType} dropped at canvas x:${mousePos.x}, y:${mousePos.y}`);
-                placedPart = createPartOnCanvas(gameState.dragging.partType, mousePos.x, mousePos.y);
-            } else {
-                console.log("Part drag cancelled (released outside canvas).");
+            if (placedPart) {
+                console.log('[DRAG_END_SNAP_RENDER_CHECK] Renderer: wireframes=', gameState.render.options.wireframes, 'Canvas offsetParent:', gameState.render.canvas.offsetParent ? 'Exists' : 'null', 'Canvas W/H:', gameState.render.canvas.width, gameState.render.canvas.height);
             }
+        } else if (isOverCanvas) {
+            console.log(`[DRAG_END_REGULAR] Part ${gameState.dragging.partType} dropped at canvas local (x:${mousePos.x}, y:${mousePos.y})`);
+            placedPart = createPartOnCanvas(gameState.dragging.partType, mousePos.x, mousePos.y);
+            if (placedPart) {
+                console.log('[DRAG_END_REGULAR_RENDER_CHECK] Renderer: wireframes=', gameState.render.options.wireframes, 'Canvas offsetParent:', gameState.render.canvas.offsetParent ? 'Exists' : 'null', 'Canvas W/H:', gameState.render.canvas.width, gameState.render.canvas.height);
+            }
+        } else {
+            console.log("[DRAG_END] Part drag cancelled (released outside canvas).");
         }
 
-        // Cleanup drag state
-        if (gameState.dragging.ghostElement) {
-            gameState.dragging.ghostElement.remove();
-        }
-        clearSnapState(); // Clear snap-specific states
+        if (gameState.dragging.ghostElement) gameState.dragging.ghostElement.remove();
+        clearSnapState();
         gameState.dragging.isDragging = false;
         gameState.dragging.partType = null;
         gameState.dragging.ghostElement = null;
         gameState.dragging.originalElement = null;
-
         document.removeEventListener('mousemove', handleDragMove);
         document.removeEventListener('mouseup', handleDragEnd);
-        // renderSnapHighlights(); // Clear highlights
-        console.log("Dragging ended.");
+        console.log("[DRAG_END] Dragging operation fully cleaned up and ended.");
     }
 
     /**
@@ -673,11 +671,13 @@ function drawConnectionPoints(event) {
      * PDS 2.2.1
      */
     function createPartOnCanvas(partType, x, y, angle = 0, snappedTo = null) { // Added snappedTo parameter
+        console.log(`[CREATE_PART] Called with: partType=${partType}, x=${x}, y=${y}, angle=${angle}, snappedTo:`, snappedTo);
         const partDef = componentDefaults[partType];
         if (!partDef) {
-            console.error(`Unknown part type: ${partType}`);
+            console.error(`[CREATE_PART] Unknown part type: ${partType}`);
             return null;
         }
+        console.log('[CREATE_PART] Part definition:', partDef);
 
         let body;
         const commonOptions = {
@@ -699,26 +699,59 @@ function drawConnectionPoints(event) {
             isPlayerPart: true // Flag for easy identification
         };
 
-        if (partType === 'chassis') {
-            body = Bodies.rectangle(x, y, partDef.width, partDef.height, commonOptions);
-        } else if (partType === 'wheel') {
-            body = Bodies.circle(x, y, partDef.radius, { ...commonOptions, ...partDef.matterJsOptions });
-        } else if (partType === 'spike') {
-            // For spike, create a compound body if it has connection points to shift its CoM
-            // For now, simple polygon using vertices. Origin (0,0) of vertices is part's center.
-            body = Bodies.fromVertices(x, y, [partDef.vertices], commonOptions);
-        } else {
-            console.error(`Unsupported part type for creation: ${partType}`);
+    // Ensure this part is not commented out or failing silently
+    if (partType === 'chassis') { body = Bodies.rectangle(x, y, partDef.width, partDef.height, commonOptions); }
+    else if (partType === 'wheel') { body = Bodies.circle(x, y, partDef.radius, { ...commonOptions, ...partDef.matterJsOptions }); }
+    else if (partType === 'spike') { body = Bodies.fromVertices(x, y, [partDef.vertices], commonOptions); }
+    else { console.error(`[CREATE_PART] Critical: Body type specific creation logic failed for ${partType}`); return null; }
+
+
+    if (!body) {
+        console.error(`[CREATE_PART] CRITICAL ERROR: Body was not created for partType ${partType}. Check body creation logic.`);
             return null;
         }
-
-        // Assign custom properties to the Matter.js body
         body.customProps = customProps;
 
-        World.add(gameState.world, body);
-        gameState.playerRobot.parts.push(body); // Track player parts
+    console.log('[CREATE_PART] Body to be added to world:', {
+        matterJsBodyId: body.id,
+        customPartId: customProps.id,
+        partType: customProps.type,
+        targetPosition: { x: x, y: y }, // Log target position
+        actualPosition: { ...body.position }, // Log actual initial position from Matter
+        angle: body.angle,
+        renderOptions: { ...body.render },
+        bounds: { min: { ...body.bounds.min }, max: { ...body.bounds.max } }
+    });
 
-        console.log(`${partDef.label} added to world at (${x.toFixed(0)}, ${y.toFixed(0)}) with ID ${body.customProps.id}. Health: ${body.customProps.health}`);
+    const bodiesBeforeAdd = gameState.world.bodies.length;
+    console.log(`[CREATE_PART] World bodies count BEFORE add: ${bodiesBeforeAdd}`);
+
+        World.add(gameState.world, body);
+
+    const bodiesAfterAdd = gameState.world.bodies.length;
+    console.log(`[CREATE_PART] World bodies count AFTER add: ${bodiesAfterAdd}`);
+
+    if (bodiesAfterAdd > bodiesBeforeAdd) {
+        const addedBodyInWorld = gameState.world.bodies.find(b => b.id === body.id);
+        if (addedBodyInWorld) {
+            console.log('[CREATE_PART] Body successfully found in world.bodies by ID. Details:', {
+                 id: addedBodyInWorld.id,
+                 pos: { ...addedBodyInWorld.position },
+                 angle: addedBodyInWorld.angle,
+                 label: addedBodyInWorld.label, // Matter's internal label
+                 renderVisible: addedBodyInWorld.render.visible,
+                 fill: addedBodyInWorld.render.fillStyle,
+                 stroke: addedBodyInWorld.render.strokeStyle
+            });
+        } else {
+            console.error('[CREATE_PART] CRITICAL ERROR: Body added to world, but NOT found by ID in world.bodies immediately after. This indicates a major issue!');
+        }
+    } else {
+        console.error('[CREATE_PART] CRITICAL ERROR: World.add() did not increase bodies count. Part NOT added to world.');
+    }
+
+    gameState.playerRobot.parts.push(body);
+    console.log(`[CREATE_PART] ${customProps.label} (ID: ${customProps.id}) added to playerRobot.parts. Final log from createPartOnCanvas.`);
         return body;
     }
 
