@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Robot Battle - Final Polish</title>
+    <style>
+        :root {
+            --bg-color: #1a1a1a; --panel-color: #252528; --canvas-bg: #2a2a2e;
+            --border-color: #444; --text-color: #f0f0f0; --accent-color: #66B2D9;
+            --button-color: #4a4a50; --danger-color: #c94444; --health-green: #4CAF50; --health-red: #F44336;
+        }
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; background-color: var(--bg-color);
+            font-family: 'Inter', sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            color: var(--text-color);
+        }
+        #app-container { display: flex; width: 100%; height: 100%; padding: 10px; box-sizing: border-box; gap: 15px; }
+        #game-container { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+        h1 { margin: 0 0 10px 0; font-weight: 300; text-align: center; }
+        #canvas-wrapper { flex-grow: 1; position: relative; border-radius: 8px; overflow: hidden; box-shadow: 0 5px 20px rgba(0,0,0,0.4); }
+        canvas { display: block; background-color: var(--canvas-bg); }
+        #editor-panel {
+            width: 220px; flex-shrink: 0; padding: 15px; background-color: var(--panel-color);
+            border-radius: 8px; display: flex; flex-direction: column; gap: 20px;
+        }
+        .panel-section h2 { font-size: 1.2rem; text-align: center; margin: 0 0 15px 0; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; }
+        #parts-inventory { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+        .part-icon { background-color: var(--button-color); border-radius: 8px; padding: 10px; cursor: pointer; text-align: center; user-select: none; transition: all 0.2s; }
+        .part-icon:active { background-color: var(--accent-color); transform: scale(0.98); }
+        .part-icon svg { width: 40px; height: 40px; margin: 0 auto 5px; display: block; pointer-events: none; }
+        .part-icon span { font-size: 0.8rem; pointer-events: none; }
+        textarea {
+            width: 100%; box-sizing: border-box; height: 80px; background: #333;
+            border: 1px solid var(--border-color); color: var(--text-color);
+            border-radius: 4px; padding: 5px; font-family: monospace; font-size: 0.7rem; resize: none;
+        }
+        .io-buttons { display: flex; gap: 10px; margin-top: 10px; }
+        .io-buttons button, .battle-button {
+            flex: 1; padding: 10px; border: none; background: var(--button-color);
+            color: var(--text-color); border-radius: 4px; cursor: pointer; transition: background-color 0.2s;
+        }
+        .battle-button { background-color: var(--accent-color); color: #1a1a1a; font-weight: bold; }
+        .battle-button:hover { background-color: #88cbe9; }
+
+        #drive-controls { position: absolute; bottom: 20px; left: 20px; right: 20px; display: none; justify-content: space-between; pointer-events: none; z-index: 10; opacity: 0.7; }
+        .drive-button {
+            width: 60px; height: 60px; background: rgba(74, 74, 80, 0.7);
+            border: 2px solid rgba(120, 120, 120, 0.8); border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 2rem; color: white; user-select: none; pointer-events: all;
+        }
+        #game-over-screen {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7); display: none; flex-direction: column;
+            align-items: center; justify-content: center; z-index: 20;
+        }
+        #game-over-screen h2 { font-size: 3rem; margin: 0; text-shadow: 0 0 10px black; }
+        #game-over-screen button { margin-top: 20px; background-color: var(--accent-color); color: #1a1a1a; font-weight: bold; padding: 15px 30px; }
+
+        @media (max-width: 768px) {
+            #app-container { flex-direction: column; }
+            #editor-panel { width: 100%; order: 2; box-sizing: border-box; }
+            #game-container { order: 1; }
+        }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app-container">
+        <div id="editor-panel">
+            <div class="panel-section">
+                <h2 id="editor-title">Parts</h2>
+                <div id="parts-inventory"></div>
+            </div>
+            <div id="editor-controls">
+                <div class="panel-section">
+                    <h2>Design</h2>
+                    <textarea id="robot-json" placeholder="Save or load robot JSON here..."></textarea>
+                    <div class="io-buttons">
+                        <button id="save-robot-btn">Save</button>
+                        <button id="load-robot-btn">Load</button>
+                    </div>
+                     <button id="clear-btn" style="width:100%; margin-top: 10px;" class="battle-button">Clear</button>
+                </div>
+                <div class="panel-section">
+                    <button id="start-battle-btn" class="battle-button" style="width:100%; padding: 15px;">Start Battle</button>
+                </div>
+            </div>
+        </div>
+        <div id="game-container">
+            <h1 id="main-title">Robot Assembly</h1>
+            <div id="canvas-wrapper">
+                <canvas id="game-canvas"></canvas>
+            </div>
+            <div id="drive-controls">
+                <div class="drive-button" id="drive-left">◀</div>
+                <div class="drive-button" id="drive-right">▶</div>
+            </div>
+            <div id="game-over-screen">
+                <h2 id="game-over-text">You Win!</h2>
+                <button id="reset-btn">Back to Editor</button>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <script>
+    (() => {
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', main);
+        else main();
+
+        function main() {
+            const { Engine, Render, Runner, Bodies, Composite, Constraint, Vector, Body, Events } = Matter;
+
+            const dom = {
+                canvas: document.getElementById('game-canvas'),
+                canvasWrapper: document.getElementById('canvas-wrapper'),
+                inventory: document.getElementById('parts-inventory'),
+                saveBtn: document.getElementById('save-robot-btn'),
+                loadBtn: document.getElementById('load-robot-btn'),
+                clearBtn: document.getElementById('clear-btn'),
+                startBattleBtn: document.getElementById('start-battle-btn'),
+                resetBtn: document.getElementById('reset-btn'),
+                jsonText: document.getElementById('robot-json'),
+                driveControls: document.getElementById('drive-controls'),
+                driveLeft: document.getElementById('drive-left'),
+                driveRight: document.getElementById('drive-right'),
+                gameOverScreen: document.getElementById('game-over-screen'),
+                gameOverText: document.getElementById('game-over-text'),
+                editorControls: document.getElementById('editor-controls'),
+                mainTitle: document.getElementById('main-title')
+            };
+
+            const gameState = {
+                engine: Engine.create(), render: null, mode: 'editor',
+                boundaries: [], playerRobot: [], enemyRobot: [],
+                isDraggingPart: false, draggedPartType: null, draggedPartGhost: null, snapTarget: null,
+                controls: { left: false, right: false },
+                audioContext: null,
+                soundBuffers: {}
+            };
+            
+            // --- Component Definitions ---
+            const ComponentFactory = {
+                chassis: { name: "Chassis", icon: `<svg fill="#D96666" viewBox="0 0 24 24"><path d="M20,8h-4V4h4V8z M14,4v4H4V4H14z M20,10h-4v4h4V10z M14,14v-4H4v4H14z M20,16h-4v4h4V16z M14,20v-4H4v4H14z"/></svg>`, create: (x, y, options) => Bodies.rectangle(x, y, 150, 60, { label: "chassis", chamfer: { radius: 5 }, render: { fillStyle: '#D96666' }, customProps: { type: 'chassis', health: 250, maxHealth: 250, connectionPoints: [{ x: -75, y: 0 }, { x: 75, y: 0 }, { x: 0, y: -30 }, { x: 0, y: 30 }] }, ...options }) },
+                wheel: { name: "Wheel", icon: `<svg fill="#66B2D9" viewBox="0 0 24 24"><path d="M12,2C6.48,2,2,6.48,2,12s4.48,10,10,10s10-4.48,10-10S17.52,2,12,2z M12,20c-4.41,0-8-3.59-8-8s3.59-8,8-8s8,3.59,8,8S16.41,20,12,20z M12,6c-3.31,0-6,2.69-6,6s2.69,6,6,6s6-2.69,6-6S15.31,6,12,6z"/></svg>`, create: (x, y, options) => Bodies.circle(x, y, 30, { label: "wheel", friction: 0.8, restitution: 0.3, render: { fillStyle: '#66B2D9' }, customProps: { type: 'wheel', health: 80, maxHealth: 80, connectionPoints: [] }, ...options }) },
+                spike: { name: "Spike", icon: `<svg fill="#b8b8b8" viewBox="0 0 24 24"><path d="M12,2L2,22h20L12,2z"/></svg>`, create: (x, y, options) => Bodies.rectangle(x, y, 20, 40, { label: "spike", render: { fillStyle: '#b8b8b8' }, customProps: { type: 'spike', health: 50, maxHealth: 50, connectionPoints: [{ x: 0, y: 20 }] }, ...options }) }
+            };
+            const ENEMY_BOT_JSON = `{"parts":[{"id":1,"type":"chassis","position":{"x":596.5,"y":200},"angle":0},{"id":2,"type":"wheel","position":{"x":521.5,"y":200},"angle":0},{"id":3,"type":"wheel","position":{"x":671.5,"y":200},"angle":0},{"id":4,"type":"spike","position":{"x":596.5,"y":170},"angle":0}],"constraints":[{"bodyAId":1,"bodyBId":2,"pointA":{"x":-75,"y":0}},{"bodyAId":1,"bodyBId":3,"pointA":{"x":75,"y":0}},{"bodyAId":1,"bodyBId":4,"pointA":{"x":0,"y":-30}}]}`;
+
+            // --- FUNCTION DEFINITIONS ---
+            
+            function createSound(name, { type, duration, startFreq, endFreq }) {
+                const ctx = gameState.audioContext;
+                if (!ctx) return;
+                const buffer = ctx.createBuffer(1, ctx.sampleRate * duration, ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < data.length; i++) {
+                    const progress = i / data.length;
+                    if (type === 'noise') {
+                        data[i] = Math.random() * 2 - 1;
+                    } else { // sine
+                        const freq = startFreq + (endFreq - startFreq) * progress;
+                        data[i] = Math.sin(2 * Math.PI * freq * (i / ctx.sampleRate));
+                    }
+                    data[i] *= (1 - progress);
+                }
+                gameState.soundBuffers[name] = buffer;
+            }
+
+            function initAudio() {
+                try {
+                    gameState.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    createSound('explosion', { type: 'noise', duration: 0.5, startFreq: 800, endFreq: 200 });
+                    createSound('hit', { type: 'sine', duration: 0.1, startFreq: 600, endFreq: 400 });
+                    createSound('click', { type: 'sine', duration: 0.05, startFreq: 880, endFreq: 880 });
+                } catch (e) {
+                    console.error("Web Audio API is not supported in this browser.", e);
+                }
+            }
+
+            function playSound(name) {
+                const ctx = gameState.audioContext;
+                const buffer = gameState.soundBuffers[name];
+                if (!ctx || !buffer) return;
+                const source = ctx.createBufferSource();
+                source.buffer = buffer;
+                source.connect(ctx.destination);
+                source.start(0);
+            }
+
+            function gameLoop() {
+                if (gameState.mode === 'battle') {
+                    applyPlayerControls();
+                    applyAIControls();
+                }
+            }
+            
+            function initComponents() {
+                Object.keys(ComponentFactory).forEach(partType => {
+                    const { name, icon } = ComponentFactory[partType];
+                    const iconEl = document.createElement('div');
+                    iconEl.className = 'part-icon';
+                    iconEl.dataset.partType = partType;
+                    iconEl.innerHTML = `${icon}<span>${name}</span>`;
+                    dom.inventory.appendChild(iconEl);
+                });
+            }
+
+            function initControls() {
+                document.querySelectorAll('button').forEach(button => {
+                    button.addEventListener('click', () => playSound('click'));
+                });
+                document.body.addEventListener('mousedown', (e) => handleDragStart(e.target));
+                document.body.addEventListener('touchstart', (e) => handleDragStart(e.target), { passive: false });
+                window.addEventListener('mousemove', handleDragMove);
+                window.addEventListener('touchmove', handleDragMove, { passive: false });
+                window.addEventListener('mouseup', handleDragEnd);
+                window.addEventListener('touchend', handleDragEnd);
+                
+                window.addEventListener('keydown', (e) => {
+                    const key = e.key.toLowerCase();
+                    if (key === 'a') gameState.controls.left = true;
+                    if (key === 'd') gameState.controls.right = true;
+                    if (gameState.isDraggingPart && key === 'r') Body.rotate(gameState.draggedPartGhost, Math.PI / 4);
+                });
+                window.addEventListener('keyup', (e) => {
+                    const key = e.key.toLowerCase();
+                    if (key === 'a') gameState.controls.left = false;
+                    if (key === 'd') gameState.controls.right = false;
+                });
+                
+                const setControl = (control, value) => (e) => { e.preventDefault(); gameState.controls[control] = value; };
+                dom.driveLeft.addEventListener('touchstart', setControl('left', true), { passive: false });
+                dom.driveLeft.addEventListener('touchend', setControl('left', false));
+                dom.driveRight.addEventListener('touchstart', setControl('right', true), { passive: false });
+                dom.driveRight.addEventListener('touchend', setControl('right', false));
+
+                dom.saveBtn.addEventListener('click', serializeRobot);
+                dom.loadBtn.addEventListener('click', () => deserializeRobot(dom.jsonText.value));
+                dom.clearBtn.addEventListener('click', () => clearWorld(true));
+                dom.startBattleBtn.addEventListener('click', startBattle);
+                dom.resetBtn.addEventListener('click', resetToEditor);
+                window.addEventListener('resize', handleResize);
+            }
+
+            function handleCollisions(event) {
+                if (gameState.mode !== 'battle') return;
+                event.pairs.forEach(pair => {
+                    const speed = pair.collision.speed;
+                    if (speed < 2) return;
+                    checkDamage(pair.bodyA, pair.bodyB, speed);
+                    checkDamage(pair.bodyB, pair.bodyA, speed);
+                });
+            }
+
+            function checkDamage(attacker, defender, speed) {
+                if (attacker.label === 'spike' && defender.customProps && attacker.customProps.owner !== defender.customProps.owner) {
+                    playSound('hit');
+                    const damage = speed * 2;
+                    defender.customProps.health -= damage;
+                    defender.render.fillStyle = '#ff0000';
+                    setTimeout(() => {
+                        if(ComponentFactory[defender.customProps.type]) {
+                           defender.render.fillStyle = ComponentFactory[defender.customProps.type].create().render.fillStyle;
+                        }
+                    }, 100);
+                    if (defender.customProps.health <= 0) destroyPart(defender);
+                }
+            }
+
+            function destroyPart(part) {
+                playSound('explosion');
+                for(let i=0; i < 20; i++) {
+                    const explosionPart = Bodies.circle(part.position.x, part.position.y, Math.random() * 5 + 2, {
+                        frictionAir: 0.05,
+                        render: { fillStyle: `hsl(${Math.random() * 60}, 100%, 50%)` }
+                    });
+                    Body.setVelocity(explosionPart, { x: (Math.random() - 0.5) * 15, y: (Math.random() - 0.5) * 15 });
+                    Composite.add(gameState.engine.world, explosionPart);
+                    setTimeout(() => Composite.remove(gameState.engine.world, explosionPart), 700);
+                }
+                Composite.remove(gameState.engine.world, part);
+                 const allConstraints = Composite.allConstraints(gameState.engine.world);
+                 allConstraints.forEach(constraint => {
+                    if (constraint.bodyA === part || constraint.bodyB === part) {
+                        Composite.remove(gameState.engine.world, constraint);
+                    }
+                 });
+                if (part.label === 'chassis') {
+                    if (gameState.mode === 'battle') { // Prevent game over in editor
+                        handleGameOver(part.customProps.owner === 'enemy' ? 'player' : 'enemy');
+                    }
+                }
+            }
+
+            function drawHealthBar(context, robotParts) {
+                const chassis = robotParts.find(p => p.label === 'chassis');
+                if (!chassis) return;
+                const healthPercent = chassis.customProps.health / chassis.customProps.maxHealth;
+                const barWidth = 100;
+                const barHeight = 10;
+                const barX = chassis.position.x - barWidth / 2;
+                const barY = chassis.position.y - 60;
+                context.fillStyle = '#333';
+                context.fillRect(barX, barY, barWidth, barHeight);
+                context.fillStyle = healthPercent > 0.5 ? 'var(--health-green)' : healthPercent > 0.2 ? '#FFC107' : 'var(--health-red)';
+                context.fillRect(barX, barY, barWidth * Math.max(0, healthPercent), barHeight);
+                context.strokeStyle = '#fff';
+                context.strokeRect(barX, barY, barWidth, barHeight);
+            }
+
+            function drawUI(context) {
+                context.save();
+                if (gameState.mode === 'editor') {
+                     gameState.playerRobot.forEach(body => {
+                        body.customProps?.connectionPoints?.forEach(point => {
+                            const worldPoint = Vector.add(body.position, Vector.rotate(point, body.angle));
+                            context.beginPath(); context.arc(worldPoint.x, worldPoint.y, 8, 0, 2 * Math.PI);
+                            context.fillStyle = 'rgba(255, 255, 0, 0.3)'; context.fill();
+                        });
+                    });
+                    if (gameState.draggedPartGhost) {
+                        const { vertices } = gameState.draggedPartGhost;
+                        context.beginPath(); context.moveTo(vertices[0].x, vertices[0].y);
+                        for (let j = 1; j < vertices.length; j += 1) context.lineTo(vertices[j].x, vertices[j].y);
+                        context.closePath();
+                        context.fillStyle = gameState.draggedPartGhost.render.fillStyle;
+                        context.globalAlpha = gameState.draggedPartGhost.render.opacity; context.fill();
+                    }
+                    if (gameState.snapTarget) {
+                        const { body, point } = gameState.snapTarget;
+                        const worldPoint = Vector.add(body.position, Vector.rotate(point, body.angle));
+                        context.beginPath(); context.arc(worldPoint.x, worldPoint.y, 10, 0, 2 * Math.PI);
+                        context.fillStyle = 'rgba(0, 255, 0, 0.7)'; context.fill();
+                    }
+                } else if (gameState.mode === 'battle') {
+                    drawHealthBar(context, gameState.playerRobot);
+                    drawHealthBar(context, gameState.enemyRobot);
+                }
+                context.restore();
+            }
+
+            function switchMode(newMode) {
+                gameState.mode = newMode;
+                if (newMode === 'battle') {
+                    dom.mainTitle.innerText = "Battle!";
+                    dom.editorControls.style.display = 'none';
+                    dom.driveControls.style.display = 'flex';
+                } else { // editor
+                    dom.mainTitle.innerText = "Robot Assembly";
+                    dom.editorControls.style.display = 'block';
+                    dom.driveControls.style.display = 'none';
+                    dom.gameOverScreen.style.display = 'none';
+                }
+            }
+
+            function startBattle() {
+                if (gameState.playerRobot.length === 0) {
+                    alert("Build a robot before starting a battle!");
+                    return;
+                }
+                const playerJson = getRobotJson();
+                clearWorld(false);
+                deserializeRobot(playerJson, 'player');
+                deserializeRobot(ENEMY_BOT_JSON, 'enemy');
+                switchMode('battle');
+            }
+
+            function resetToEditor() {
+                clearWorld(true);
+                switchMode('editor');
+            }
+
+            function handleGameOver(winner) {
+                if (gameState.mode !== 'battle') return;
+                dom.gameOverScreen.style.display = 'flex';
+                dom.gameOverText.innerText = winner === 'player' ? "You Win!" : "Game Over";
+                gameState.mode = 'ended';
+            }
+
+            function applyPlayerControls() { const torque = 0.1; gameState.playerRobot.forEach(part => { if (part.label === 'wheel') { let appliedTorque = 0; if (gameState.controls.left) appliedTorque -= torque; if (gameState.controls.right) appliedTorque += torque; part.torque = appliedTorque; } }); }
+            
+            function applyAIControls() {
+                const playerChassis = gameState.playerRobot.find(p => p.label === 'chassis');
+                const enemyChassis = gameState.enemyRobot.find(p => p.label === 'chassis');
+                if (!playerChassis || !enemyChassis || gameState.mode !== 'battle') return;
+
+                const directionVector = Vector.sub(playerChassis.position, enemyChassis.position);
+                let angleDifference = Vector.angle(directionVector, {x:1, y:0}) - (enemyChassis.angle % (2*Math.PI));
+                if(angleDifference > Math.PI) angleDifference -= 2*Math.PI;
+                if(angleDifference < -Math.PI) angleDifference += 2*Math.PI;
+
+                const torque = 0.1;
+                const turnThreshold = 0.1;
+                const forwardTorque = (Math.abs(angleDifference) < turnThreshold * 2) ? torque : torque * 0.5;
+
+                gameState.enemyRobot.forEach(part => {
+                    if (part.label === 'wheel') {
+                       part.torque = (Math.abs(angleDifference) > turnThreshold) ? (angleDifference > 0 ? torque : -torque) : forwardTorque;
+                    }
+                });
+            }
+
+            function addPartToWorld(part, owner){
+                part.customProps.owner = owner;
+                part.collisionFilter.group = owner === 'player' ? -1 : -2;
+                Composite.add(gameState.engine.world, part);
+                const robotList = owner === 'player' ? gameState.playerRobot : gameState.enemyRobot;
+                robotList.push(part);
+            }
+
+            function clearWorld(clearPlayer) {
+                const allButBoundaries = Composite.allBodies(gameState.engine.world).filter(b => !b.isStatic);
+                Composite.remove(gameState.engine.world, allButBoundaries);
+                const allConstraints = Composite.allConstraints(gameState.engine.world);
+                Composite.remove(gameState.engine.world, allConstraints);
+                if (clearPlayer) gameState.playerRobot = [];
+                gameState.enemyRobot = [];
+            }
+
+            function getRobotJson() {
+                const parts = gameState.playerRobot;
+                if (parts.length === 0) return null;
+                const constraints = Composite.allConstraints(gameState.engine.world).filter(c => parts.includes(c.bodyA) && parts.includes(c.bodyB));
+                const data = {
+                    parts: parts.map(p => ({ id: p.id, type: p.customProps.type, position: p.position, angle: p.angle })),
+                    constraints: constraints.map(c => ({ bodyAId: c.bodyA.id, bodyBId: c.bodyB.id, pointA: c.pointA, }))
+                };
+                return JSON.stringify(data, null, 2);
+            }
+
+            function serializeRobot() { dom.jsonText.value = getRobotJson() || "Build a robot first!"; }
+
+            function deserializeRobot(json, owner) {
+                if (!json) return;
+                try {
+                    const data = JSON.parse(json);
+                    if (!data.parts) throw new Error("Invalid JSON structure.");
+                    if (owner === 'player') clearWorld(true);
+                    
+                    const bodyMap = new Map();
+                    const originPart = data.parts.find(p => p.type === 'chassis');
+                    if (!originPart) throw new Error("Robot design must have a chassis.");
+                    const origin = originPart.position;
+                    const startingPos = owner === 'enemy' ? { x: gameState.render.options.width - 200, y: 200 } : { x: 200, y: 200 };
+                    
+                    data.parts.forEach(partData => {
+                        const offset = Vector.sub(partData.position, origin);
+                        const pos = Vector.add(startingPos, offset);
+                        const newPart = ComponentFactory[partData.type].create(pos.x, pos.y);
+                        Body.setAngle(newPart, partData.angle);
+                        addPartToWorld(newPart, owner);
+                        bodyMap.set(partData.id, newPart);
+                    });
+
+                    (data.constraints || []).forEach(conData => {
+                        const bodyA = bodyMap.get(conData.bodyAId);
+                        const bodyB = bodyMap.get(conData.bodyBId);
+                        if (bodyA && bodyB) {
+                            Composite.add(gameState.engine.world, Constraint.create({ bodyA, bodyB, pointA: conData.pointA, pointB: { x: 0, y: 0 }, stiffness: 1, length: 0 }));
+                        }
+                    });
+                } catch (error) { dom.jsonText.value = `Error: ${error.message}`; }
+            }
+            
+            function handleDragStart(target) { playSound('click'); if(gameState.mode !== 'editor') return; const partIcon = target.closest('.part-icon'); if (partIcon) { gameState.isDraggingPart = true; gameState.draggedPartType = partIcon.dataset.partType; } }
+            function getEventPosition(event) { const touch = event.touches?.[0] || event.changedTouches?.[0]; return { x: touch?.clientX ?? event.clientX, y: touch?.clientY ?? event.clientY }; }
+            function handleDragMove(e) { if (!gameState.isDraggingPart) return; e.preventDefault(); const screenPos = getEventPosition(e); const canvasBounds = dom.canvas.getBoundingClientRect(); const worldPos = { x: screenPos.x - canvasBounds.left, y: screenPos.y - canvasBounds.top }; if (!gameState.draggedPartGhost) { gameState.draggedPartGhost = ComponentFactory[gameState.draggedPartType].create(worldPos.x, worldPos.y, { isSensor: true, opacity: 0.6 }); } gameState.snapTarget = findSnapTarget(worldPos); const finalPosition = gameState.snapTarget ? Vector.add(gameState.snapTarget.body.position, Vector.rotate(gameState.snapTarget.point, gameState.snapTarget.body.angle)) : worldPos; Body.setPosition(gameState.draggedPartGhost, finalPosition); }
+            function handleDragEnd() { if (!gameState.isDraggingPart || !gameState.draggedPartGhost) return; const newPart = ComponentFactory[gameState.draggedPartType].create(gameState.draggedPartGhost.position.x, gameState.draggedPartGhost.position.y); Body.setAngle(newPart, gameState.draggedPartGhost.angle); addPartToWorld(newPart, 'player'); if (gameState.snapTarget) { const constraint = Constraint.create({ bodyA: gameState.snapTarget.body, bodyB: newPart, pointA: gameState.snapTarget.point, pointB: { x: 0, y: 0 }, stiffness: 1, length: 0 }); Composite.add(gameState.engine.world, constraint); } gameState.isDraggingPart = false; gameState.draggedPartGhost = null; gameState.snapTarget = null; }
+            function findSnapTarget(worldPos) { const bodies = gameState.playerRobot.concat(gameState.enemyRobot); const snapRadius = 30; for (const body of bodies) { if (body.customProps?.connectionPoints) { for (const point of body.customProps.connectionPoints) { const worldPoint = Vector.add(body.position, Vector.rotate(point, body.angle)); if (Vector.magnitude(Vector.sub(worldPos, worldPoint)) < snapRadius) { return { body, point }; } } } } return null; }
+            function handleResize() { if (!gameState.render) return; const { clientWidth, clientHeight } = dom.canvasWrapper; gameState.render.bounds.max.x = clientWidth; gameState.render.bounds.max.y = clientHeight; gameState.render.options.width = clientWidth; gameState.render.options.height = clientHeight; gameState.render.canvas.width = clientWidth; gameState.render.canvas.height = clientHeight; updateBoundaries(); }
+            function updateBoundaries() { const world = gameState.engine.world; const boundaries = gameState.boundaries; if(!gameState.render.options) return; const { width, height } = gameState.render.options; const wallThickness = 100; if (boundaries.length > 0) Composite.remove(world, boundaries); boundaries.length = 0; const newBoundaries = [ Bodies.rectangle(width / 2, height + (wallThickness/2) - 1, width, wallThickness, { isStatic: true, render: { fillStyle: '#4c4c52' } }), Bodies.rectangle(width / 2, -(wallThickness/2) + 1, width, wallThickness, { isStatic: true, render: { fillStyle: '#4c4c52' } }), Bodies.rectangle(-(wallThickness/2) + 1, height / 2, wallThickness, height * 5, { isStatic: true, render: { fillStyle: '#4c4c52' } }), Bodies.rectangle(width + (wallThickness/2) - 1, height / 2, wallThickness, height * 5, { isStatic: true, render: { fillStyle: '#4c4c52' } }) ]; boundaries.push(...newBoundaries); Composite.add(world, boundaries); }
+            
+            function init() {
+                gameState.render = Render.create({ canvas: dom.canvas, engine: gameState.engine, options: { wireframes: false, background: 'transparent', showConstraints: true } });
+                const runner = Runner.create();
+                Render.run(gameState.render);
+                Runner.run(runner, gameState.engine);
+                initAudio();
+                initComponents();
+                initControls();
+                handleResize();
+                Events.on(gameState.engine, 'beforeUpdate', gameLoop);
+                Events.on(gameState.engine, 'collisionStart', handleCollisions);
+                (function renderLoop() {
+                    if (gameState.render.context) drawUI(gameState.render.context);
+                    requestAnimationFrame(renderLoop);
+                })();
+                console.log("Robot Battle: Final version initialized.");
+            }
+
+            init();
+        }
+    })();
+    </script>
+</body>
+</html>
