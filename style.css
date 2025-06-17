@@ -1,0 +1,206 @@
+/* PDS 4.3 Visual Style Guide */
+:root {
+    --bg-color: #1a1a1a;
+    --panel-color: #252528;
+    --accent-color: #66B2D9;
+    --danger-color: #c94444;
+    --health-green: #4CAF50;
+    --health-red: #F44336;
+    --text-color: #e0e0e0;
+    --border-color: #333333;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start; /* Align items to the top */
+    min-height: 100vh;
+    overflow: hidden; /* Prevent body scrollbars */
+}
+
+.app-container {
+    display: flex;
+    width: 100%;
+    max-width: 1600px; /* Max width for large screens */
+    height: 100vh;    /* Full viewport height */
+}
+
+.editor-panel {
+    width: 280px; /* Slightly wider for better spacing */
+    background-color: var(--panel-color);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px; /* Space between sections */
+    height: calc(100vh - 40px); /* Full height minus padding */
+    overflow-y: auto; /* Scroll if content overflows */
+    border-right: 1px solid var(--border-color);
+}
+
+.editor-panel header h1 {
+    font-weight: 300;
+    font-size: 1.8em;
+    color: var(--accent-color);
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+.editor-panel h2 {
+    font-weight: 300;
+    font-size: 1.4em;
+    margin-top: 0;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 5px;
+}
+
+.parts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+    gap: 10px;
+}
+
+/* Placeholder for part icons */
+.part-icon {
+    width: 60px;
+    height: 60px;
+    background-color: #333;
+    border: 1px solid var(--border-color);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: grab;
+}
+.part-icon:active {
+    cursor: grabbing;
+}
+
+#json-textarea {
+    width: calc(100% - 12px); /* Full width minus padding */
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 5px;
+    font-family: monospace;
+    resize: vertical;
+}
+
+button {
+    background-color: var(--accent-color);
+    color: #ffffff;
+    border: none;
+    padding: 10px 15px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 400;
+    transition: background-color 0.2s ease;
+    width: 100%; /* Make buttons full width of their container */
+    margin-top: 5px; /* Add some space between buttons */
+}
+
+button:hover {
+    background-color: #559ac8; /* Darken accent color on hover */
+}
+
+button.danger {
+    background-color: var(--danger-color);
+}
+
+button.danger:hover {
+    background-color: #b33b3b; /* Darken danger color on hover */
+}
+
+#start-battle-button {
+    margin-top: auto; /* Pushes to the bottom of the flex container */
+    padding: 15px;
+    font-size: 1.2em;
+}
+
+.game-container {
+    flex-grow: 1;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center; /* Center canvas horizontally */
+    height: calc(100vh - 40px); /* Full height minus padding */
+}
+
+.game-title {
+    font-weight: 300;
+    font-size: 1.5em;
+    margin-bottom: 15px;
+}
+
+#game-canvas {
+    background-color: #2c2c2e; /* Slightly different from main bg for contrast */
+    border: 1px solid var(--border-color);
+    display: block; /* Remove extra space below canvas */
+    width: 100%;    /* Make canvas responsive */
+    height: 100%;   /* Make canvas responsive */
+}
+
+/* Accessibility */
+button:focus, #json-textarea:focus {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
+.part-ghost {
+    border: 2px dashed var(--accent-color);
+    /* Assuming panel color is #252528, which is rgb(37, 37, 40) */
+    background-color: rgba(37, 37, 40, 0.7);
+    box-shadow: 0 0 10px rgba(0,0,0,0.5);
+}
+
+/* Game Over Screen Styles */
+.game-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.75); /* Semi-transparent background */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 100; /* Ensure it's above other elements like canvas */
+}
+
+.game-over-content {
+    background-color: var(--panel-color);
+    padding: 30px 40px;
+    border-radius: 8px;
+    text-align: center;
+    box-shadow: 0 0 15px rgba(0,0,0,0.5);
+}
+
+.game-over-content h2 {
+    color: var(--accent-color);
+    font-size: 2.5em;
+    margin-bottom: 15px;
+}
+
+.game-over-content p {
+    font-size: 1.5em;
+    margin-bottom: 25px;
+}
+
+#back-to-editor-button { /* Style the specific button if needed, or rely on general button styles */
+    padding: 12px 25px;
+    font-size: 1.2em;
+    background-color: var(--accent-color);
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+#back-to-editor-button:hover {
+    background-color: #559ac8; /* Slightly darker accent */
+}

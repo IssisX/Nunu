@@ -2,6 +2,49 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Battle</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <div class="editor-panel">
+            <header>
+                <h1>Robot Battle</h1>
+            </header>
+            <section class="parts-inventory">
+                <h2>Parts</h2>
+                <div class="parts-grid">
+                    <!-- Part icons will be added here by JS -->
+                </div>
+            </section>
+            <section class="design-management">
+                <h2>Design</h2>
+                <textarea id="json-textarea" rows="5" placeholder="Robot JSON will appear here..."></textarea>
+                <button id="save-button">Save Design</button>
+                <button id="load-button">Load Design</button>
+                <button id="clear-button" class="danger">Clear Canvas</button>
+            </section>
+            <button id="start-battle-button" class="accent">Start Battle</button>
+        </div>
+        <div class="game-container">
+            <h2 class="game-title">Robot Assembly</h2>
+            <canvas id="game-canvas"></canvas>
+            <!-- Battle mode controls will be added here later -->
+        </div>
+    </div>
+    <!-- Add this inside the .app-container or near .game-container -->
+    <div id="game-over-screen" class="game-overlay" style="display: none;">
+        <div class="game-over-content">
+            <h2 id="game-over-title">Game Over!</h2>
+            <p id="game-over-winner"></p>
+            <button id="back-to-editor-button">Back to Editor</button>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <script src="script.js"></script>
+=======
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Robot Battle - Final Polish</title>
     <style>
