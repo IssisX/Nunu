@@ -1,0 +1,261 @@
+Project Bible & Living Design Document: Robot Battle
+Document Version: 1.0 (Ultimate Edition)
+Date: June 17, 2025
+Status: Living Document
+Author: sTix_ww4
+Table of Contents
+ * Vision & Strategy
+   * 1.1. Document Philosophy
+   * 1.2. Core Vision
+   * 1.3. Guiding Pillars
+   * 1.4. Target Audience (Personas)
+   * 1.5. Key Performance Indicators (KPIs)
+ * Core Gameplay Loop & Features
+   * 2.1. Gameplay Flow Diagram
+   * 2.2. Feature Deep Dive: Assembly Mode
+   * 2.3. Feature Deep Dive: Battle Mode
+   * 2.4. Feature Deep Dive: Data Management
+ * Game Systems & Mechanics (GDD)
+   * 3.1. Physics & Environment
+   * 3.2. Component Matrix & Stats
+   * 3.3. Combat & Damage System
+   * 3.4. AI System
+ * UI/UX, Art, & Audio Direction
+   * 4.1. UI/UX Philosophy
+   * 4.2. Wireframes & Layout
+   * 4.3. Visual Style Guide
+   * 4.4. Audio Design
+   * 4.5. Accessibility (A11y) Mandates
+ * Technical Architecture
+   * 5.1. Technology Stack
+   * 5.2. Code Architecture Overview
+   * 5.3. State Management
+   * 5.4. Performance Budget
+ * Project Roadmap & Backlog
+   * 6.1. Release Plan
+   * 6.2. Detailed Feature Backlog
+ * Glossary
+1. Vision & Strategy
+1.1. Document Philosophy
+This is a living document, intended to be the central repository of knowledge for the Robot Battle project. It is designed to be read by designers, developers, product managers, and testers. All future development, design decisions, and feature implementations should align with the principles and specifications outlined herein. It must be updated as the project evolves.
+1.2. Core Vision
+To deliver a frictionless, web-based sandbox experience that empowers players to seamlessly design, build, and battle custom robots. The game will blend creative engineering with accessible, physics-driven combat, offering immediate fun without the barrier of installation or complex tutorials.
+1.3. Guiding Pillars
+ * Creative Freedom: The core of the game is building. The system should be robust enough to allow for a wide variety of functional (and non-functional) designs. The player should feel like an inventor.
+ * Accessible Physics: The physics should be predictable and fun. While based on a real engine, outcomes should feel intuitive, not punishingly realistic. "Fun over realism."
+ * Instant Action: The loop from building to battling must be as short as possible. A player should be able to go from an idea to a battle in under 30 seconds.
+1.4. Target Audience (Personas)
+ * Primary Persona: "The Casual Tinkerer" (Ages 14-25)
+   * Who: Plays browser games on portals like Poki or CrazyGames. Enjoys sandbox, physics, and building games.
+   * Needs: Simplicity, immediate feedback, low barrier to entry, and a satisfying "cause and effect" gameplay loop. Not interested in steep learning curves.
+ * Secondary Persona: "The STEM Student" (Ages 12-18)
+   * Who: Has an interest in robotics, engineering, or programming. May be part of a school robotics club.
+   * Needs: A system with logical rules, an understanding of how parts interact, and the ability to experiment with different designs to see tangible results in performance.
+ * Tertiary Persona: "The Hobbyist Coder" (Ages 18-35)
+   * Who: Understands JSON, basic web principles. Might be interested in the game's mechanics from a technical perspective.
+   * Needs: A transparent system. The Save/Load JSON feature is a direct appeal to this group, allowing them to "data-mine" and share designs outside the game itself.
+1.5. Key Performance Indicators (KPIs)
+Success will be measured by the following metrics:
+ * Engagement:
+   * Daily Active Users (DAU)
+   * Average Session Length (Target: > 8 minutes)
+   * "Battle-to-Build" Ratio (How many battles does an average user start per session?)
+ * Retention:
+   * Day 1 & Day 7 Retention Rate
+ * Feature Adoption:
+   * Percentage of users who use the Save/Load feature.
+   * Distribution of parts used in saved robot designs.
+2. Core Gameplay Loop & Features
+2.1. Gameplay Flow Diagram
+[Page Load] -> [ASSEMBLY MODE] -> [Click "Start Battle"] -> [BATTLE MODE]
+      ^              |   ^                                     |
+      |              |   +------> [Save/Load JSON] <------------+
+      |              |                                         |
+      +--------------+--------- [Click "Back to Editor"] <- [GAME OVER]
+
+2.2. Feature Deep Dive: Assembly Mode
+2.2.1. Drag-and-Drop Building
+ * User Story: "As a player, I want to visually construct a robot by dragging parts from an inventory onto a build area, so I can intuitively bring my design to life."
+ * Acceptance Criteria:
+   * GIVEN I am in Assembly Mode.
+   * WHEN I press and hold my mouse/finger on a part in the inventory.
+   * THEN a semi-transparent "ghost" of that part is attached to my cursor.
+   * WHEN I move my cursor over the canvas.
+   * THEN the ghost part moves with it.
+   * WHEN I release the cursor.
+   * THEN a physical, interactive version of the part is added to the physics world at the cursor's location.
+ * Edge Cases:
+   * Releasing a part outside the canvas cancels the action.
+   * Initiating a new drag while one is in progress is ignored.
+2.2.2. Connection Point Snapping
+ * User Story: "As a player, I want parts to automatically snap to valid connection points on my robot, so I can easily and precisely assemble components."
+ * Acceptance Criteria:
+   * GIVEN I am dragging a part.
+   * WHEN the part is within the snap radius (30px) of a connection point on another part.
+   * THEN the connection point is highlighted in green (rgba(0, 255, 0, 0.7)).
+   * AND the ghost part's position locks to the connection point's world position.
+   * WHEN I release the part while it is snapped.
+   * THEN the part is created at the connection point's location and a Matter.js Constraint is created, physically linking the two parts.
+ * Edge Cases:
+   * A single part cannot be snapped to more than one point at a time. The closest valid point takes priority.
+2.3. Feature Deep Dive: Battle Mode
+2.3.1. Real-Time Physics Combat
+ * User Story: "As a player, I want to control my robot in a real-time battle against an AI, where the outcome is determined by my design and skillful maneuvering."
+ * Acceptance Criteria:
+   * GIVEN I have a robot with at least one chassis and have clicked "Start Battle".
+   * WHEN the battle loads.
+   * THEN my robot spawns on the left, and the enemy robot spawns on the right.
+   * THEN the UI switches to Battle Mode (drive controls visible, editor hidden).
+   * THEN my keyboard/touch inputs apply torque to my robot's wheels.
+   * THEN collisions between my weapons and the enemy (and vice versa) apply damage based on the defined formula.
+   * WHEN a robot's chassis is destroyed.
+   * THEN the Game Over screen is displayed, declaring the winner.
+2.4. Feature Deep Dive: Data Management
+2.4.1. Robot Serialization (Save/Load)
+ * User Story: "As a player, I want to save my robot design as text and load it back later, so I can preserve my creations and share them with others."
+ * Acceptance Criteria:
+   * Save:
+     * GIVEN I have a robot on the canvas.
+     * WHEN I click the "Save" button.
+     * THEN the <textarea> is populated with a valid JSON string representing all parts and their connections.
+   * Load:
+     * GIVEN there is a valid robot JSON string in the <textarea>.
+     * WHEN I click the "Load" button.
+     * THEN the current robot on the canvas is cleared.
+     * THEN the robot from the JSON is reconstructed on the canvas.
+ * Edge Cases:
+   * Loading invalid or malformed JSON displays an error message in the textarea and does not affect the current robot.
+   * Loading a design without a chassis displays an error.
+3. Game Systems & Mechanics (GDD)
+3.1. Physics & Environment
+ * Engine: Matter.js v0.19.0
+ * Gravity: engine.world.gravity.y = 1.0 (standard earth-like gravity).
+ * Environment: A fully enclosed arena with four static, indestructible walls. The walls have a high friction to discourage wall-riding.
+ * Collision Model:
+   * Player robot parts belong to collisionFilter.group = -1.
+   * Enemy robot parts belong to collisionFilter.group = -2.
+   * This ensures parts on the same robot do not collide with each other, preventing self-destruction.
+3.2. Component Matrix & Stats
+| Part Name | label | Health (HP) | Mass (Default) | Connection Points | Key Mechanic |
+|---|---|---|---|---|---|
+| Chassis | chassis | 250 | 10 | 4 (sides, top, bottom) | Core component. Destruction = loss. |
+| Wheel | wheel | 80 | 5 | 0 | Provides motion. friction: 0.8. torque applied via controls. |
+| Spike | spike | 50 | 3 | 1 (base) | Primary weapon. Deals damage on collision. |
+3.3. Combat & Damage System
+ * Damage Trigger: A collision triggers a damage check only if pair.collision.speed > 2.
+ * Damage Formula:
+   FinalDamage = CollisionSpeed * BaseDamageMultiplier
+   * BaseDamageMultiplier: 2
+ * Damage Application: Damage is applied to the customProps.health of the part that was struck.
+ * Part Destruction: When health <= 0:
+   * The part is removed from the Matter.js world.
+   * All Constraints attached to the part are removed.
+   * A cosmetic explosion effect is triggered.
+   * If the part's label is chassis, the game ends.
+3.4. AI System
+The enemy AI operates on a simple state machine.
+ * States:
+   * SEEKING: Determine the player's chassis location.
+   * ALIGNING: Rotate to face the player.
+   * ADVANCING: Move towards the player.
+ * Logic Loop (applyAIControls):
+   * Calculate vector from enemy chassis to player chassis.
+   * Calculate angle difference between enemy's forward vector and the target vector.
+   * If abs(angleDifference) > 0.1 radians (ALIGNING): Apply opposing torque to wheels to turn towards the player.
+   * Else (ADVANCING): Apply forward torque to wheels to move towards the player.
+4. UI/UX, Art, & Audio Direction
+4.1. UI/UX Philosophy
+The UI must be clean, intuitive, and secondary to the game itself. It should provide necessary information without cluttering the screen. All interactive elements must be large enough for easy touch interaction on mobile.
+4.2. Wireframes & Layout
+Assembly Mode (Desktop)
++--------------------------------+--------------------------------------+
+| EDITOR PANEL (220px)           | GAME CONTAINER                       |
+|--------------------------------|--------------------------------------|
+| [LOGO/TITLE]                   | [TITLE: "Robot Assembly"]            |
+|                                |                                      |
+| <h2>Parts</h2>                | +----------------------------------+ |
+| [Icon] [Icon] [Icon] [Icon]    | |                                  | |
+|                                | |                                  | |
+| <h2>Design</h2>                | |        CANVAS (Flex Grow)        | |
+| [  JSON Text Area  ]           | |                                  | |
+| [Save] [Load]                  | |                                  | |
+| [     Clear     ]              | +----------------------------------+ |
+|                                |                                      |
+| [      START BATTLE      ]     |                                      |
++--------------------------------+--------------------------------------+
+
+4.3. Visual Style Guide
+ * Palette: Dark mode, tech-focused.
+   * --bg-color: #1a1a1a (Main background)
+   * --panel-color: #252528 (UI panels)
+   * --accent-color: #66B2D9 (Primary call-to-action, highlights)
+   * --danger-color: #c94444 (Delete/clear buttons)
+   * --health-green: #4CAF50
+   * --health-red: #F44336
+ * Typography:
+   * Font: 'Inter', sans-serif (system-ui fallback).
+   * Headings: font-weight: 300 (Light) for a modern, clean look.
+   * Body/Buttons: font-weight: 400 (Regular).
+ * Iconography: Simple, filled, single-color SVG icons. Easily recognizable silhouettes.
+ * Motion: UI animations should be fast and functional (200ms). Game effects (explosions) should be juicy and satisfying.
+4.4. Audio Design
+ * Direction: Minimalist, synthesized sounds generated by the Web Audio API. Avoids external asset loading and gives a retro-tech feel.
+ * Sound Library:
+   * click: High-frequency sine wave. Provides interactive feedback.
+   * hit: Descending pitch sine wave. Communicates a successful attack.
+   * explosion: White noise with a fast decay. Signals destruction.
+4.5. Accessibility (A11y) Mandates
+ * Contrast: All text must meet WCAG AA contrast ratios against its background.
+ * Keyboard Navigation: All interactive elements (buttons, icons) must be focusable and activatable via keyboard (Tab and Enter).
+ * ARIA Labels: Drive controls and other non-descriptive buttons will have aria-label attributes.
+ * Reduced Motion: In future versions, a user setting should be available to disable particle effects and screen shake.
+5. Technical Architecture
+5.1. Technology Stack
+ * Language: JavaScript (ES6+)
+ * Physics: Matter.js (v0.19.0) via CDN
+ * Framework: None (Vanilla JS)
+ * Styling: Vanilla CSS with CSS Custom Properties (Variables)
+ * Platform: Web (HTML5)
+5.2. Code Architecture Overview
+The application is self-contained within a single HTML file and initialized by an IIFE ((() => { ... })();).
+ * main(): The entry point, called on DOMContentLoaded.
+ * Initialization (init... functions):
+   * init(): The master initializer that calls all others.
+   * initComponents(): Populates the parts inventory UI.
+   * initControls(): Attaches all event listeners.
+   * initAudio(): Sets up the Web Audio context.
+ * Game Loop & Events:
+   * gameLoop(): Called by Matter.js before each physics update. Contains state-dependent logic (e.g., applyPlayerControls).
+   * handleCollisions(): Event-driven function for damage calculation.
+ * State Changers: Functions that directly alter the gameState.mode (startBattle, resetToEditor, handleGameOver).
+5.3. State Management
+A single global gameState object serves as the "single source of truth." This centralized object holds the physics engine instance, entity arrays, UI state flags, and control inputs. This avoids state being scattered across the DOM or multiple objects, simplifying debugging.
+5.4. Performance Budget
+ * Target FPS: 60 FPS during battle on a mid-range desktop/modern mobile device.
+ * Physics Body Count: The number of dynamic bodies should be kept under 100 to ensure smooth performance.
+ * Load Time: Target a DOMContentLoaded time of under 1 second on a fast connection.
+6. Project Roadmap & Backlog
+6.1. Release Plan
+ * v1.0 (Current): Minimum Viable Product.
+ * v1.1 (Quality of Life): Focus on user experience improvements.
+   * Implement localStorage for a persistent "garage".
+   * Add more visual/audio feedback for game events.
+ * v1.2 (Content Pack): Expand the sandbox.
+   * Introduce new parts (flippers, armor, alternative chassis).
+   * Add new AI opponents and a "Campaign" mode.
+ * v2.0 (Multiplayer): The next major evolution.
+   * Investigate WebRTC for peer-to-peer battling.
+6.2. Detailed Feature Backlog
+| ID | Feature Name | User Story | Priority | Complexity |
+|---|---|---|---|---|
+| FEAT-001 | Persistent Garage | As a player, I want my robots to be saved automatically, so I don't have to use copy/paste. | High | Medium |
+| FEAT-002 | Flipper Part | As a player, I want a flipper part to strategically launch my opponent. | High | High |
+| FEAT-003 | Armor Part | As a player, I want to add non-functional armor plates to increase my robot's durability. | Medium | Low |
+| FEAT-004 | Arena Hazards | As a player, I want to fight in arenas with obstacles like pits or saws for more dynamic battles. | Medium | Medium |
+| FEAT-005 | Campaign Mode | As a player, I want to fight a series of increasingly difficult AI opponents to prove my skill. | Low | High |
+7. Glossary
+ * Constraint: A Matter.js object that physically links two bodies together.
+ * GDD: Game Design Document. A document detailing the mechanics, rules, and design of a game.
+ * IIFE: Immediately Invoked Function Expression. A JavaScript pattern used to create a local scope and avoid polluting the global namespace.
+ * PDS: Product Design Specification.
+ * Serialization: The process of converting an in-memory object (the robot) into a storable format (a JSON string).
